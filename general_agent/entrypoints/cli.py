@@ -146,34 +146,41 @@ async def _run_cli(argv: list[str]) -> None:
     system_ctx = get_system_context(os.getcwd())
     system_prompt = format_system_context(system_ctx)
 
-    # Print mode: one-shot query, output result, exit
+    # Print mode: one-shot query with tools
     if args.print and args.prompt:
-        from general_agent.services.api.messages import query_model_without_streaming
-
-        messages = [{"role": "user", "content": args.prompt}]
-        result = await query_model_without_streaming(
-            messages=messages,
-            system_prompt=system_prompt,
+        from general_agent.agent.loop import AgentState, run_agent
+        from general_agent.tools.factory import create_registry
+        state = AgentState(
+            messages=[{"role": "user", "content": args.prompt}],
+            tool_registry=create_registry(),
+            git_context=system_prompt,
+            max_turns=5,
         )
-        _print_assistant_response(result)
+        result_text, _ = await run_agent(state)
+        if result_text:
+            _stream_text(result_text)
+        print()
         return
 
-    # One-shot with positional prompt (no --print flag)
+    # One-shot with positional prompt
     if args.prompt:
-        from general_agent.services.api.messages import query_model_with_streaming
-
+        from general_agent.agent.loop import AgentState, run_agent
+        from general_agent.tools.factory import create_registry
         _show_banner()
         print()
         print(f"  \033[2m{args.prompt}\033[0m")
         print()
-
-        messages = [{"role": "user", "content": args.prompt}]
-        async for msg in query_model_with_streaming(
-            messages=messages,
-            system_prompt=system_prompt,
-        ):
+        state = AgentState(
+            messages=[{"role": "user", "content": args.prompt}],
+            tool_registry=get_registry(),
+            git_context=system_prompt,
+            max_turns=5,
+        )
+        result_text, all_msgs = await run_agent(state)
+        for msg in reversed(all_msgs):
             if msg.get("role") == "assistant":
                 _print_assistant_response(msg)
+                break
         return
 
     # Interactive REPL - run setup if not configured, otherwise enter REPL
@@ -288,13 +295,23 @@ async def _run_repl(config) -> None:
 
     _show_banner()
 
-    # Gather system context (git status, etc.) matching cc-haha pattern
+    # Gather system context and register tools
     from general_agent.utils.context import get_system_context, format_system_context
     system_ctx = get_system_context(os.getcwd())
-    system_prompt = format_system_context(system_ctx)
-    print()
+    git_context = format_system_context(system_ctx)
 
-    conversation: list[dict[str, Any]] = []
+    from general_agent.tools.factory import create_registry
+    registry = create_registry()
+
+    from general_agent.agent.loop import AgentState, run_agent
+
+    # Shared AgentState across turns (cc-haha: preserves conversation)
+    state = AgentState(
+        tool_registry=registry,
+        git_context=git_context,
+        max_turns=10,
+    )
+    print()
 
     try:
         while True:
@@ -307,34 +324,33 @@ async def _run_repl(config) -> None:
             if not user_input:
                 continue
 
-            # History (Unix only)
             if readline is not None:
                 readline.write_history_file(hist_file)
 
-            # Slash commands
             if user_input.startswith("/"):
-                if _handle_slash(user_input):
+                if _handle_slash(user_input, state):
                     break
                 continue
 
-            # Add to conversation and query
-            conversation.append({"role": "user", "content": user_input})
             print()
 
-            from general_agent.services.api.messages import query_model_with_streaming
+            # Append user message to shared state
+            state.messages.append({"role": "user", "content": user_input})
 
             try:
-                async for msg in query_model_with_streaming(
-                    messages=list(conversation),
-                    system_prompt=system_prompt,
-                ):
+                result_text, all_messages = await run_agent(
+                    state,
+                    on_progress=lambda msg: print(msg, flush=True),
+                    on_permission=_ask_permission)
+
+                # Show final response with usage
+                for msg in reversed(all_messages):
                     if msg.get("role") == "assistant":
                         _print_assistant_response(msg)
-                        conversation.append(msg)
+                        break
+
             except Exception as e:
                 print(f"\n  \033[31mError: {e}\033[0m\n")
-                # Remove the failed user message from conversation
-                conversation.pop()
 
             print()
 
@@ -345,6 +361,17 @@ async def _run_repl(config) -> None:
             except Exception:
                 pass
         print("\n  Goodbye.")
+
+
+def _ask_permission(name: str, args: dict[str, Any]) -> bool:
+    """Interactive permission prompt for tool execution."""
+    preview = str(args).replace("\n", "\\n")[:100]
+    print(f"  \033[33mTool {name} needs permission:\033[0m {preview}")
+    try:
+        answer = input("  Allow? (y/n) ").strip().lower()
+        return answer in ("y", "yes")
+    except (EOFError, KeyboardInterrupt):
+        return False
 
 
 def _show_banner() -> None:
@@ -366,7 +393,7 @@ def _show_banner() -> None:
   \033[2mType /help for commands, /exit to quit.\033[0m""")
 
 
-def _handle_slash(cmd: str) -> bool:
+def _handle_slash(cmd: str, state=None) -> bool:
     """Handle slash commands. Returns True if the REPL should exit."""
     parts = cmd.split()
     name = parts[0].lower()
@@ -397,7 +424,8 @@ def _handle_slash(cmd: str) -> bool:
         return False
 
     if name == "/clear":
-        # We can't clear the generator, but signal intent
+        if state is not None:
+            state.messages.clear()
         print("  \033[2mConversation history cleared.\033[0m")
         return False
 
