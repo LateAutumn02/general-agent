@@ -105,31 +105,37 @@ flowchart TD
 | **Skills 技能系统** | 技能发现、匹配、注入 | 启动发现 + 工具触发 | 项目级静态 Skills + Inline 模式 |
 | **Multi-Agent** | 子 Agent 创建、任务分发 | 由工具或用户触发 | v1 暂不实现 |
 | **MCP 协议** | 外部工具集成 | 启动连接 + 动态发现 | 基础 stdio 传输 + 工具发现 |
-| **API 集成** | LLM API 通信 | 每次 API 调用 | 完整 Anthropic API + OpenAI 代理 |
+| **API 集成** | LLM API 通信 | 每次 API 调用 | 双接口：OpenAI格式 + Anthropic格式 |
+| **程序初始化** | 启动流程、CLI、配置 | 每次启动 | 已完成 ✅ |
 | **上下文压缩** | 长对话压缩为摘要 | Token 超过阈值 | 基础 auto-compact + microcompact |
 | **沙箱安全** | 命令执行隔离 | 每次 Bash 调用 | macOS Seatbelt / Linux bwrap |
 
 ## v1 实现边界
 
 ```
-✅ v1 实现:
-  Agent 核心循环 (基础版)
+✅ Phase 1 已完成:
+  程序初始化 (CLI + STATE + memoized init + argparse)
+  API 集成 (OpenAI 兼容 + Anthropic 兼容 双接口)
+  流式/非流式查询 + 重试
+  Git 状态上下文注入
+  交互式配置向导 (~/.general_agent.env)
+  斜杠命令 (/help /model /session /exit)
+  模型别名 + 友好显示名 (V4 Pro)
+
+✅ Phase 2+ 待实现:
+  Agent 核心循环 (主循环 while True)
   Tool 工具系统 (6-8 个核心工具)
   Memory 记忆系统 (文件级全量加载)
   Skills 技能系统 (静态 + Inline)
   MCP 协议 (stdio 传输 + 基础工具)
-  API 集成 (Anthropic SDK + OpenAI 代理)
   上下文压缩 (auto-compact + microcompact)
   沙箱安全 (Seatbelt / bwrap)
-  配置管理 (settings.json)
 
 ❌ v1 暂不实现:
   多 Agent 编排 ──────→ 单 Agent 足够
   流式工具执行 ────────→ 顺序执行即可
   Session Memory ─────→ 用 Memory 系统覆盖
   AutoDream ──────────→ 无多会话场景不需要
-  OAuth / Channel ────→ 个人使用不需要
-  Reactive Compact ───→ auto-compact 足够
 ```
 
 ---

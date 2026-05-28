@@ -178,17 +178,19 @@ Claude Code 的启动流程跨越约 13 个阶段，从模块加载的副作用�
 
 ---
 
-## v1 简化流程
+## v1 实际实现 (Phase 1)
 
-general-agent v1 跳过大量企业/TUI/远程功能，启动流程简化为：
+general-agent v1 Phase 1 实现的启动流程：
 
-1. **解析 CLI 参数** — 模型、API key、权限模式
-2. **读取配置文件** — settings.json、CLAUDE.md
-3. **创建全局状态** — sessionId、cwd、projectRoot
-4. **加载命令和工具** — 注册 6-8 个核心工具
-5. **加载 Skills** — 项目级 SKILL.md 扫描
-6. **组装系统提示词** — 默认提示 + 工具描述 + CLAUDE.md + 记忆文件
-7. **进入主循环** — 等待用户输入
+1. **模块级副作用** — colorama ANSI 初始化、`.env` 加载 (`~/.general_agent.env`)
+2. **快速路径** — `--version`/`--help` 直接返回
+3. **argparse CLI** — `--model`/`--print`/`--verbose`/`--continue`
+4. **memoized `init()`** — 版本检查、配置验证、信号注册、STATE 初始化
+5. **系统上下文** — `get_system_context()` 并行 5 个 git 命令注入 system prompt
+6. **交互式配置** — 首次运行弹出向导（模型/接口/API key）
+7. **REPL** — readline 输入循环、斜杠命令、流式响应展示
+
+未实现（Phase 2+）：CLAUE.md 加载、命令注册、Skills 扫描、MCP 连接
 
 ## 与 Claude Code 源项目的差异说明
 

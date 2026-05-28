@@ -307,18 +307,24 @@ OpenAIResponsesRequest:
 
 ---
 
-## v1 简化
+## v1 实际实现 (Phase 1)
 
-general-agent v1 API 集成：
+general-agent v1 Phase 1 API 集成：
 
-1. **Anthropic SDK 客户端** — 直接 API + Bedrock 支持
-2. **流式查询** — 完整的 `queryModel()` 生成器
-3. **消息规范化** — tool_use/tool_result 对修复
-4. **系统提示词构建** — 缓存优化块
-5. **重试** — 指数退避 + 模型回退
-6. **错误处理** — 分类 + 用户可见消息
-7. **代理** — OpenAI Chat Completions 转换
-8. **不做** — Vertex、Foundry、Advisor 工具、快速模式、缓存编辑
+1. **双接口分发** — `GENERAL_AGENT_PROVIDER` 控制 OpenAI 或 Anthropic
+2. **OpenAI 格式** — 调任意提供商 `/v1/chat/completions`，流式/非流式
+3. **Anthropic 格式** — 调任意提供商 `/anthropic` 端点，Anthropic SDK
+4. **流式查询** — async generator，text_delta + tool_use 累积
+5. **非流式回退** — 流式失败自动 fallback
+6. **重试** — 指数退避 + 断路器（5xxx/429）
+7. **错误处理** — 分类 + 重试进度消息
+8. **消息格式转换** — OpenAI ↔ internal ↔ Anthropic 双向转换
+9. **使用统计** — Token 数 + 耗时 + DeepSeek 计费
+
+与文档计划差异：
+- 不做 Anthropic 官方 API（仅 `/anthropic` 端点）
+- 不做 OpenAI 代理层（直接 SDK 调用，无反向代理）
+- 不做 Bedrock/Vertex/Foundry 后端
 
 ---
 
