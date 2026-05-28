@@ -87,13 +87,29 @@
 
 ---
 
-## v1 简化
+## v1 实际实现 (Phase 2)
 
-general-agent v1 工具执行简化：
-- **仅顺序执行**：先等 API 全部返回，再逐个执行工具
-- **不做 AI 安全分类器**：权限走 deny → allow → ask 三层规则
-- **不做进度回调**：工具执行过程中不报告进度
-- **不做并发**：所有工具串行执行
+general-agent v1 Phase 2 实现的工具系统：
+
+1. **Tool 基类** — `tools/tool.py`，对标 cc-haha buildTool() 模式，提供全部默认值
+2. **ToolsRegistry** — `tools/registry.py`，注册/查找/过滤
+3. **4 个核心工具**：
+   - **BashTool** — shell 命令执行，只读检测，超时处理
+   - **FileReadTool** — 文件读取，行偏移/限制，始终只读
+   - **FileWriteTool** — 文件创建/覆盖，权限询问
+   - **FileEditTool** — old_string→new_string 替换，replace_all 支持
+
+实现模式：
+- Tool 基类提供所有默认值（is_enabled=True, is_read_only=False 等）
+- 子类只覆盖需要的属性和方法
+- PermissionResult(behavior="allow"|"deny"|"ask") 对标 cc-haha 权限检查
+- validate_input() 在 call() 之前运行，路径规范化和安全检查
+
+与文档计划差异：
+- 未实现并发执行（串行）
+- 未实现 AI 安全分类器（走 deny→allow→ask 三层规则）
+- 未实现进度回调（on_progress 占位但不用）
+- 未实现 auto_classifier_input（v1 不需要）
 
 ---
 

@@ -110,9 +110,21 @@ ToolResultBlock:
 
 ---
 
-## v1 简化
+## v1 实际实现 (Phase 2)
 
-general-agent v1 工具接口仅需 8 个核心字段/方法（标注 `[v1]` 的项），其余置空。不需要渲染方法，因为 v1 不做 TUI。
+已实现的 Tool 基类方法：
+
+| 方法 | 默认值 | 说明 |
+|---|---|---|
+| `is_enabled()` | `True` | 工具是否可用 |
+| `is_read_only(args)` | `False` | 是否只读 |
+| `is_concurrency_safe(args)` | `False` | 是否可并发 |
+| `is_destructive(args)` | `False` | 是否不可逆 |
+| `check_permissions(args, ctx)` | `allow` | 权限检查 |
+| `validate_input(args, ctx)` | `None` (通过) | 输入校验 |
+| `to_classifier_input(args)` | `""` (跳过) | 分类器输入 |
+
+未实现的 cc-haha 方法（v1 不需要）：用户界面渲染、TUI 渲染、prepare_permission_matcher、extract_search_text、grouped_tool_use 渲染。
 
 ---
 
