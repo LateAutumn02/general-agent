@@ -91,6 +91,29 @@ general-agent v1 对主循环做了以下简化，以下步骤在 v1 中跳过�
 
 ---
 
+## v1 实际实现 (Phase 3)
+
+1. **AgentState** — turn_count, max_turns, tool_registry, messages
+2. **主循环 run_agent()** — while turn_count < max_turns
+3. **每轮步骤**：
+   - 组装 system prompt (工具描述 + git 上下文)
+   - 流式 API 调用，收集 text + tool_use 块
+   - 无 tool_use → 返回结果，退出循环
+   - 执行工具：validate → check_permissions → call → 格式化
+   - 注入 tool_result 到对话，继续下一轮
+4. **权限**：ask → 只读自动放行，写操作拒绝
+
+已接入 REPL：共享 AgentState 跨轮次保留对话历史，/clear 清空。
+7 个核心工具：Bash、Read、Write、Edit、Grep、Glob、WebFetch。
+一键式 `glagent "question"` + `-p` 模式均走 run_agent() 带工具。
+API 错误自动重试（最多 max_turns 次）。
+
+与文档计划差异：
+- 不实现任何 `[v1置空]` 的步骤（snip、历史裁剪等）
+- 权限仅 basic 三层，无 hook 和分类器
+
+---
+
 > 最后更新: 2026-05-28 | 参考源 commit: 5a86ab0
 >
 > 参考源：cc-haha src/query.ts:307-1730, src/QueryEngine.ts

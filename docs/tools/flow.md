@@ -93,11 +93,14 @@ general-agent v1 Phase 2 实现的工具系统：
 
 1. **Tool 基类** — `tools/tool.py`，对标 cc-haha buildTool() 模式，提供全部默认值
 2. **ToolsRegistry** — `tools/registry.py`，注册/查找/过滤
-3. **4 个核心工具**：
-   - **BashTool** — shell 命令执行，只读检测，超时处理
+3. **7 个核心工具**：
+   - **BashTool** — shell 命令执行，只读检测（黑名单模式），超时处理
    - **FileReadTool** — 文件读取，行偏移/限制，始终只读
    - **FileWriteTool** — 文件创建/覆盖，权限询问
    - **FileEditTool** — old_string→new_string 替换，replace_all 支持
+   - **GrepTool** — ripgrep 正则搜索，支持 glob 过滤、大小写
+   - **GlobTool** — 文件名模式匹配，按修改时间排序
+   - **WebFetchTool** — HTTP/HTTPS 获取网页内容，HTML→文本转换
 
 实现模式：
 - Tool 基类提供所有默认值（is_enabled=True, is_read_only=False 等）

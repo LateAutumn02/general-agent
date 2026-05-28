@@ -35,11 +35,14 @@ class BashTool(Tool):
         }
 
     def is_read_only(self, args: dict[str, Any]) -> bool:
+        """Everything is read-only unless it matches destructive patterns."""
         cmd = args.get("command", "")
-        read_only_prefixes = ("ls", "cat", "head", "tail", "grep", "find",
-                              "which", "echo", "pwd", "whoami", "git status",
-                              "git log", "git diff", "git branch")
-        return any(cmd.startswith(p) for p in read_only_prefixes)
+        destructive_patterns = (
+            "> ", ">> ", "| tee ", "rm ", "mv ", "cp ", "chmod ",
+            "chown ", "pip install", "npm install", "apt install",
+            "brew install", "make ", "dd ", "mkfs", ":(){",
+        )
+        return not any(p in cmd for p in destructive_patterns)
 
     def is_concurrency_safe(self, args: dict[str, Any]) -> bool:
         return self.is_read_only(args)

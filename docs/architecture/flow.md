@@ -125,8 +125,10 @@ flowchart TD
 ✅ Phase 2 已完成:
   Tool 工具系统 (Bash/Read/Write/Edit + Tool基类 + 注册表)
 
-✅ Phase 3+ 待实现:
-  Agent 核心循环 (主循环 while True)
+✅ Phase 3 已完成:
+  Agent 核心循环 (while True 主循环 + 工具调度 + system prompt)
+
+⏳ 后续待实现:
   Memory 记忆系统 (文件级全量加载)
   Skills 技能系统 (静态 + Inline)
   MCP 协议 (stdio 传输 + 基础工具)

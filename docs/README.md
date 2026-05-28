@@ -135,7 +135,7 @@ Tool:
 | 模块 | 目录 | 状态 |
 |---|---|---|
 | 系统架构 | `architecture/` | 已完成 |
-| Agent 核心循环 | `agent/` | 已完成 |
+| Agent 核心循环 | `agent/` | Phase 3 已完成 |
 | 工具系统 | `tools/` | Phase 2 已完成 |
 | 记忆系统 | `memory/` | 已完成 |
 | Skills 系统 | `skills/` | 已完成 |
