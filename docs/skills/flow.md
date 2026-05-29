@@ -64,12 +64,13 @@
 
 ---
 
-## v1 简化流程
+## v1 实际实现
 
-general-agent v1 大幅简化：
-1. **启动时** — 仅扫描 `<project>/.claude/skills/`，加载所有 SKILL.md
-2. **运行时** — AI 调用 Skill 工具 → Inline 模式注入 prompt
-3. **不做** — 动态发现、条件 Skill、Fork 模式、压缩恢复
+1. **启动时** — 扫描 `<project>/.claude/skills/<name>/SKILL.md`，解析 YAML frontmatter
+2. **System prompt** — 注入可用 Skill 列表（name + description + when_to_use）
+3. **斜杠命令** — 用户输入 `/skill-name` 激活，prompt 注入对话
+4. **优先级** — 内置命令（/help）优先于 skill 命令
+5. **不做** — 动态发现、条件 Skill、Fork 模式
 
 ---
 

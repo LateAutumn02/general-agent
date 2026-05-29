@@ -138,7 +138,7 @@ Tool:
 | Agent 核心循环 | `agent/` | Phase 3 已完成 |
 | 工具系统 | `tools/` | Phase 2 已完成 |
 | 记忆系统 | `memory/` | Phase 4 已完成 |
-| Skills 系统 | `skills/` | 已完成 |
+| Skills 系统 | `skills/` | Phase 7 已完成 |
 | 程序初始化 | `initialization/` | Phase 1 已完成 |
 | 多 Agent 编排 | `multi-agent/` | Phase 5 已完成 |
 | MCP 协议 | `mcp/` | 已完成 |

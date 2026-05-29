@@ -137,8 +137,10 @@ flowchart TD
 ✅ Phase 6 已完成:
   Context Compact (microcompact + snip + auto + reactive + /compact)
 
+✅ Phase 7 已完成:
+  Skills (SKILL.md 扫描 + 系统提示词注入 + 斜杠命令)
+
 ⏳ 后续待实现:
-  Skills 技能系统 (静态 + Inline)
   MCP 协议 (stdio 传输 + 基础工具)
   沙箱安全 (Seatbelt / bwrap)
 
