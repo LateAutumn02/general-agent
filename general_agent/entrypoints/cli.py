@@ -172,7 +172,7 @@ async def _run_cli(argv: list[str]) -> None:
         print()
         state = AgentState(
             messages=[{"role": "user", "content": args.prompt}],
-            tool_registry=get_registry(),
+            tool_registry=create_registry(),
             git_context=system_prompt,
             max_turns=5,
         )
@@ -482,6 +482,22 @@ def _handle_slash(cmd: str, state=None) -> bool:
   e.g. \"remember that I prefer TypeScript over JavaScript\".
   The agent will write to .claude/memory/.
 """)
+        return False
+
+    if name == "/coordinator":
+        if len(parts) > 1 and parts[1] in ("off", "disable"):
+            if state is not None:
+                state.system_prompt_extra = ""
+                state.auto_memory = memory_store.is_enabled()
+            print("  \033[33mCoordinator mode disabled.\033[0m")
+            return False
+        if state is not None:
+            from general_agent.tasks.coordinator import COORDINATOR_SYSTEM_PROMPT
+            state.system_prompt_extra = COORDINATOR_SYSTEM_PROMPT
+            state.auto_memory = False
+            print("  \033[32mCoordinator mode enabled.\033[0m")
+            print("  \033[2mThe agent will now orchestrate workers for complex tasks.\033[0m")
+            print("  \033[2mUse /coordinator off to disable.\033[0m")
         return False
 
     if name == "/model":

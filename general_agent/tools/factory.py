@@ -8,6 +8,7 @@ from general_agent.tools.edit import FileEditTool
 from general_agent.tools.grep import GrepTool
 from general_agent.tools.glob import GlobTool
 from general_agent.tools.webfetch import WebFetchTool
+from general_agent.tools.agent_tool import AgentTool
 
 
 def create_registry() -> ToolsRegistry:
@@ -20,4 +21,5 @@ def create_registry() -> ToolsRegistry:
     registry.register(GrepTool())
     registry.register(GlobTool())
     registry.register(WebFetchTool())
+    registry.register(AgentTool())
     return registry

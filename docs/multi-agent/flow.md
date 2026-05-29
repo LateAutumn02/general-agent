@@ -332,14 +332,25 @@ SendMessage({ to: "name", message: "..." })
 
 ---
 
-## v1 状态
+## v1 实际实现
 
-多 Agent 系统在 general-agent v1 中**完全不实现**。原因：
+- **Task 系统** (`tasks/task.py`) — TaskState 生命周期 + TaskRegistry
+- **Fork Agent** (`tasks/fork.py`) — createForkContext + runForkedAgent
+- **Agent 工具** (`tools/agent_tool.py`) — 主 Agent 通过 Agent tool 生成子 Agent
+- **协调者模式** (`tasks/coordinator.py`) — Coordinator system prompt + worker 调度
+- **Team 管理** (`tasks/team.py`) — Team 目录 + 成员注册/状态
+- **Agent 记忆** (`tasks/agent_memory.py`) — Per-agent MEMORY.md
+- **任务通知** (`tasks/notify.py`) — Task 完成/失败通知
+- **SendMessage 邮箱** (`tasks/mailbox.py`) — JSON inbox 文件通信
+- **Agent 定义** (`tasks/agents.py`) — Built-in + project 自定义 Agent
+- **Memory fork 提取** — auto-extraction 使用 fork agent
 
-- v1 目标是单 Agent、单轮对话的可用体验
-- 多 Agent 系统依赖 Task 系统、Hook 系统、进程隔离、邮箱通信等复杂基础设施
-- 这些子系统在单 Agent 场景下没有使用价值
-- 后续版本在单 Agent 稳定后逐步引入
+不做：多进程 teammate（tmux/iTerm2）、工作树隔离
+
+## 已知缺口
+
+- **Agent 定义未接入 AgentTool**：用户可手动创建 `.claude/agents/<name>.md`，系统通过 `load_project_agents()` 加载，但 AgentTool 执行时未根据 `subagent_type` 匹配定义（始终用通用 fork）。后续实现时，AgentTool.call() 中根据 `args.get("subagent_type")` 查找定义，按定义限制工具集和设置 max_turns。
+- **Team 通信未接入主循环**：Mailbox 类已实现，但 agent 主循环未在每轮开始时检查收件箱。
 
 ---
 
