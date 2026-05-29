@@ -33,6 +33,9 @@ class AgentState:
     abort_signal: asyncio.Event = field(default_factory=asyncio.Event)
     system_prompt_extra: str = ""
     git_context: str = ""
+    memory_store: Any = None  # MemoryStore for auto-extraction
+    auto_memory: bool = True  # Enable auto-extraction
+    _memory_extracted: bool = field(default=False, repr=False)  # Track extraction state
 
 
 async def run_agent(
@@ -97,9 +100,16 @@ async def run_agent(
                 continue
             return f"Error after {state.turn_count} retries: {e}", state.messages
 
-        # 3. If no tool_use blocks → return
+        # 3. If no tool_use blocks → handle auto-memory then return
         if not tool_use_blocks:
-            # Auto-memory extraction would go here (Phase 3+)
+            # Auto-memory extraction: ask agent to review and save memories
+            if (state.memory_store and state.auto_memory
+                    and not state._memory_extracted
+                    and state.turn_count > 1):
+                state._memory_extracted = True
+                prompt = state.memory_store.build_extraction_prompt()
+                state.messages.append({"role": "user", "content": prompt})
+                continue  # Let agent handle extraction, then finish
             return assistant_text, state.messages
 
         # 4. Execute tools
