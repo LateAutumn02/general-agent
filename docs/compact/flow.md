@@ -205,15 +205,19 @@ SystemCompactBoundaryMessage:
 
 ---
 
-## v1 简化流程
+## v1 实际实现
 
-general-agent v1 压缩简化：
+完整还原 cc-haha compact 系统：
 
-1. **Token 计数** — 通过 token 估算检查是否超出阈值
-2. **Microcompact** — 清除旧工具结果
-3. **Auto-Compact** — 调用模型生成摘要
-4. **摘要包装** — 注入摘要消息 + 边界标记
-5. **不做** — Snip、Reactive、Context Collapse、Session Memory Compact、Cached MC
+1. **Token 计数** — `estimate_tokens()` ~4chars/token
+2. **Microcompact** — 清除旧工具结果（保留最近 5 条）
+3. **Snip Compact** — 8000 token 时裁剪旧轮次
+4. **Auto-Compact** — fork agent 生成 9 节摘要
+5. **Reactive Compact** — 413 错误时 snip + 重试
+6. **Manual `/compact`** — 随时手动压缩
+7. **摘要包装** — boundaryMarker + summaryMessages
+
+存根（API 特定）：Context Collapse、Cached MC、Session Memory Compact
 
 ---
 

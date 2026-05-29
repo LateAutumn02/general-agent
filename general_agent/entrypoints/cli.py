@@ -500,6 +500,62 @@ def _handle_slash(cmd: str, state=None) -> bool:
             print("  \033[2mUse /coordinator off to disable.\033[0m")
         return False
 
+    if name == "/compact":
+        if state is not None:
+            from general_agent.compact.compact import compact_conversation, build_post_compact_messages
+            try:
+                result = await compact_conversation(state.messages, state, is_auto=False)
+                boundary, summary_msgs = build_post_compact_messages(result)
+                state.messages = summary_msgs
+                print(f"  Compressed {result.messages_summarized} messages "
+                      f"({result.pre_compact_tokens} → ~{result.post_compact_tokens} tokens)")
+            except Exception as e:
+                print(f"  \033[31mCompact failed: {e}\033[0m")
+        return False
+
+    if name == "/autocompact":
+        if len(parts) > 1 and parts[1].isdigit():
+            pct = int(parts[1])
+            if state is not None:
+                state.compact_pct = min(99, max(10, pct))
+            print(f"  \033[32mAuto-compact: {state.compact_pct}%\033[0m "
+                  f"(~{int(1000000*state.compact_pct/100)} tokens)")
+        else:
+            print(f"  /autocompact <N>  Set auto-compact threshold "
+                  f"(current: {state.compact_pct if state else 91}%)")
+        return False
+
+    if name == "/snip":
+        if len(parts) > 1 and parts[1].isdigit():
+            pct = int(parts[1])
+            if state is not None:
+                state.snip_pct = min(99, max(10, pct))
+            print(f"  \033[33mSnip: {state.snip_pct}%\033[0m "
+                  f"(~{int(1000000*state.snip_pct/100)} tokens)")
+        else:
+            print(f"  /snip <N>  Set snip threshold "
+                  f"(current: {state.snip_pct if state else 80}%)")
+        return False
+
+    if name == "/context":
+        if len(parts) > 1:
+            size_str = parts[1].lower().rstrip("k").rstrip("K")
+            if size_str.isdigit():
+                k = int(size_str)
+                new_window = k * 1000
+                import general_agent.constants.models as cm
+                cm.MODEL_CONTEXT_WINDOW = new_window
+                cpct = state.compact_pct if state else 50
+                spct = state.snip_pct if state else 80
+                print(f"  Context: {k}K tokens")
+                print(f"  Compact: ~{int(new_window*cpct/100)} tokens ({cpct}%)")
+                print(f"  Snip: ~{int(new_window*spct/100)} tokens ({spct}%)")
+                return False
+        print(f"  /context <N>[k]  Set context window (e.g. /context 1000 or /context 1000k)")
+        from general_agent.constants.models import MODEL_CONTEXT_WINDOW
+        print(f"  Current: {int(MODEL_CONTEXT_WINDOW/1000)}K")
+        return False
+
     if name == "/model":
         if len(parts) > 1:
             from general_agent.bootstrap.state import set_main_loop_model

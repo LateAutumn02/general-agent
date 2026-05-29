@@ -134,10 +134,12 @@ flowchart TD
 ✅ Phase 5 已完成:
   Multi-Agent (Task系统 + ForkAgent + AgentTool + Memory fork提取)
 
+✅ Phase 6 已完成:
+  Context Compact (microcompact + snip + auto + reactive + /compact)
+
 ⏳ 后续待实现:
   Skills 技能系统 (静态 + Inline)
   MCP 协议 (stdio 传输 + 基础工具)
-  上下文压缩 (auto-compact + microcompact)
   沙箱安全 (Seatbelt / bwrap)
 
 ❌ v1 暂不实现:
