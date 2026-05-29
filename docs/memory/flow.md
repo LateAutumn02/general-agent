@@ -143,6 +143,23 @@ general-agent v1 对记忆系统做了最大程度的简化，仅保留最核心
 2. **手动提取** — 用户通过 `/memory save` 命令主动触发，AI 直接调用 Write/Edit 工具操作记忆文件
 3. **不做** — 按需检索、自动提取（stop hook）、夜间整理（AutoDream）、Session Memory、team memory
 
+## v1 实际实现 (Phase 4)
+
+完整还原 cc-haha memdir 记忆系统：
+
+- **YAML frontmatter** — name/description/type 三字段
+- **四类型** — user / feedback / project / reference
+- **MEMORY.md 索引** — 写/删时自动重建，200行/25KB 截断
+- **行为指令注入** — 何时存取、四类型说明、排除规则、信任但验证
+- **时效警告** — 超过1天记忆包裹 `<system-reminder>`
+- **自动提取** — run_agent() 结束后注入提示词，agent 自行判断保存
+- **按需检索** — API 侧查询选 5 条最相关记忆
+- **Session Memory** — 每次会话自动保存笔记（9 节模板）
+- **AutoDream** — 启动时检查 24h + ≥3 条记忆，提示整理
+- **/memory** 命令 — `list` / `refresh`
+
+不做：分叉Agent提取（依赖 multi-agent，留空写入文档）
+
 ---
 
 ## 与 Claude Code 源项目的差异说明

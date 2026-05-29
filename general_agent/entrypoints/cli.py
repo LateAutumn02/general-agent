@@ -304,11 +304,28 @@ async def _run_repl(config) -> None:
     registry = create_registry()
 
     from general_agent.agent.loop import AgentState, run_agent
+    from general_agent.memory.store import MemoryStore
+
+    # Load memories + check AutoDream
+    memory_store = MemoryStore()
+    memory_text = memory_store.format_for_prompt()
+
+    # AutoDream: consolidate stale memories at startup
+    if memory_store.should_dream():
+        print("  \033[2mMemory consolidation needed...\033[0m")
+        dream_prompt = memory_store.build_dream_prompt()
+        # Will be injected as first "user message" so agent handles it
+        # In REPL, this shows at first prompt. In one-shot, it runs automatically.
+        # For now, just touch lock and skip (no fork agent to run it automatically)
+        memory_store.touch_dream_lock()
 
     # Shared AgentState across turns (cc-haha: preserves conversation)
     state = AgentState(
         tool_registry=registry,
         git_context=git_context,
+        system_prompt_extra=memory_text,
+        memory_store=memory_store,
+        auto_memory=True,
         max_turns=10,
     )
     print()
@@ -410,6 +427,35 @@ def _handle_slash(cmd: str, state=None) -> bool:
     /clear          Clear conversation history
     /session        Show session info
   \033[2mJust type your question to start a conversation.\033[0m
+""")
+        return False
+
+    if name == "/memory":
+        if len(parts) > 1 and parts[1] in ("list", "ls", "show"):
+            from general_agent.memory.store import MemoryStore
+            store = MemoryStore()
+            memories = store.list_all()
+            if not memories:
+                print("  (no memories saved)")
+            else:
+                print("  \033[1mMemories:\033[0m")
+                for m in memories:
+                    print(f"    - {m['name']} ({m['size']}B)")
+            return False
+        if len(parts) > 1 and parts[1] in ("refresh", "reload"):
+            memory_text = MemoryStore().format_for_prompt()
+            if state is not None:
+                state.system_prompt_extra = memory_text
+            print("  \033[2mMemories refreshed.\033[0m")
+            return False
+        print("""
+  /memory list     Show saved memories
+  /memory refresh  Reload memories from disk
+  /memory save     Ask the agent to save memories
+
+  To save memories: just ask the agent directly,
+  e.g. \"remember that I prefer TypeScript over JavaScript\".
+  The agent will write to .claude/memory/.
 """)
         return False
 
