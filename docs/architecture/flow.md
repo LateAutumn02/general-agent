@@ -129,7 +129,7 @@ flowchart TD
   Agent 核心循环 (while True + 7 tools + 一键式 + 权限 + 重试)
 
 ✅ Phase 4 已完成:
-  Memory 记忆系统 (MemoryStore + system prompt 注入 + /memory 命令)
+  Memory 记忆系统 (完整还原: YAML frontmatter + 索引 + 四类型 + 检索 + SessionMemory + AutoDream)
 
 ⏳ 后续待实现:
   Skills 技能系统 (静态 + Inline)

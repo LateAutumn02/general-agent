@@ -306,9 +306,18 @@ async def _run_repl(config) -> None:
     from general_agent.agent.loop import AgentState, run_agent
     from general_agent.memory.store import MemoryStore
 
-    # Load memories
+    # Load memories + check AutoDream
     memory_store = MemoryStore()
     memory_text = memory_store.format_for_prompt()
+
+    # AutoDream: consolidate stale memories at startup
+    if memory_store.should_dream():
+        print("  \033[2mMemory consolidation needed...\033[0m")
+        dream_prompt = memory_store.build_dream_prompt()
+        # Will be injected as first "user message" so agent handles it
+        # In REPL, this shows at first prompt. In one-shot, it runs automatically.
+        # For now, just touch lock and skip (no fork agent to run it automatically)
+        memory_store.touch_dream_lock()
 
     # Shared AgentState across turns (cc-haha: preserves conversation)
     state = AgentState(

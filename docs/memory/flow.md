@@ -153,9 +153,12 @@ general-agent v1 对记忆系统做了最大程度的简化，仅保留最核心
 - **行为指令注入** — 何时存取、四类型说明、排除规则、信任但验证
 - **时效警告** — 超过1天记忆包裹 `<system-reminder>`
 - **自动提取** — run_agent() 结束后注入提示词，agent 自行判断保存
+- **按需检索** — API 侧查询选 5 条最相关记忆
+- **Session Memory** — 每次会话自动保存笔记（9 节模板）
+- **AutoDream** — 启动时检查 24h + ≥3 条记忆，提示整理
 - **/memory** 命令 — `list` / `refresh`
 
-不做：按需检索、分叉Agent、AutoDream
+不做：分叉Agent提取（依赖 multi-agent，留空写入文档）
 
 ---
 

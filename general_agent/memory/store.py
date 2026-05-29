@@ -299,3 +299,203 @@ Update existing memories with the Edit tool if they need refreshing."""
         else:
             result["content"] = raw.strip()
         return result
+
+    # --- On-demand retrieval ---
+
+    async def find_relevant(self, query: str, limit: int = 5) -> list[str]:
+        """Select up to N relevant memory files for a given query.
+
+        Uses a lightweight API call to pick which memories are relevant.
+        Matching cc-haha findRelevantMemories.ts pattern.
+        """
+        memories = self.load_all()
+        if not memories:
+            return []
+
+        # Build manifest of all memories (matching cc-haha scanMemoryFiles)
+        manifest_lines = []
+        for name, info in memories.items():
+            manifest_lines.append(
+                f"  [{info.get('type', 'user')}] {name}: {info.get('description', '')}"
+            )
+
+        if len(manifest_lines) <= limit:
+            return list(memories.keys())
+
+        manifest = "\n".join(manifest_lines)
+        memory_names = list(memories.keys())
+
+        try:
+            selected = await _select_relevant_memories(query, manifest, memory_names, limit)
+            return [n for n in selected if n in memories]
+        except Exception:
+            # Fallback: return all (limit to N)
+            return memory_names[:limit]
+
+    # --- Session Memory ---
+
+    def get_session_memory_path(self) -> str:
+        """Path to the per-project session memory file."""
+        from general_agent.bootstrap.state import get_session_id
+        sid = get_session_id()[:8]
+        return os.path.join(self.root, ".session", f"{sid}.md")
+
+    def load_session_memory(self) -> str:
+        """Load the current session's memory."""
+        path = self.get_session_memory_path()
+        try:
+            with open(path, encoding="utf-8") as f:
+                return f.read()
+        except FileNotFoundError:
+            return SESSION_MEMORY_TEMPLATE
+
+    def save_session_memory(self, content: str) -> None:
+        """Save session memory for the current session."""
+        path = self.get_session_memory_path()
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "w", encoding="utf-8") as f:
+            f.write(content)
+
+    # --- AutoDream (nightly consolidation) ---
+
+    def should_dream(self, min_hours: int = 24, min_memories: int = 3) -> bool:
+        """Check if memory consolidation should run.
+
+        Returns True if memories are at least min_hours old and there are enough.
+        """
+        entries = self.list_all()
+        if len(entries) < min_memories:
+            return False
+
+        lock_path = os.path.join(self.root, ".consolidate-lock")
+        try:
+            mtime = os.path.getmtime(lock_path)
+            age_hours = (datetime.now(timezone.utc).timestamp() - mtime) / 3600
+            return age_hours >= min_hours
+        except FileNotFoundError:
+            return True  # Never dreamed before
+
+    def touch_dream_lock(self) -> None:
+        """Mark consolidation as done."""
+        lock_path = os.path.join(self.root, ".consolidate-lock")
+        os.makedirs(self.root, exist_ok=True)
+        with open(lock_path, "w") as f:
+            f.write(f"dreamed at {datetime.now(timezone.utc).isoformat()}\n")
+
+    def build_dream_prompt(self) -> str:
+        """Prompt to ask the agent to consolidate memories.
+
+        Matching cc-haha autoDream/consolidationPrompt.ts pattern.
+        """
+        entries = self.list_all()
+        manifest = []
+        for e in entries:
+            manifest.append(
+                f"  - [{e.get('type', 'user')}] {e['name']}: {e.get('description', '')}"
+                f" ({e.get('age_days', 0)} days old)"
+            )
+        manifest_text = "\n".join(manifest) if manifest else "(none)"
+
+        return f"""## Memory Consolidation (AutoDream)
+
+Your memory files are getting stale. Review and consolidate them.
+
+**Current memories:**
+{manifest_text}
+
+**Instructions:**
+1. Read each memory file to understand what's saved
+2. If any information is outdated or wrong, edit the file to correct it
+3. If two memories overlap significantly, merge them into one
+4. Delete memories that are no longer relevant
+5. Convert relative dates to absolute dates
+6. Keep the MEMORY.md index under 200 lines
+7. Respond with a summary of what you changed, or 'Memories are up to date.'"""
+
+
+# ---------------------------------------------------------------------------
+# Session Memory template (matching cc-haha prompts.ts)
+# ---------------------------------------------------------------------------
+
+SESSION_MEMORY_TEMPLATE = """# Session Memory
+
+## Current State
+What am I working on?
+
+## Task specification
+What does the user want me to do?
+
+## Files and Functions
+Key files and their purpose in the current task.
+
+## Workflow
+Common commands and their execution order.
+
+## Errors & Corrections
+Errors encountered and how they were fixed.
+
+## Learnings
+What worked and what didn't.
+
+## Key Results
+Outputs the user asked for.
+
+## Worklog
+Step-by-step log of what was attempted and done.
+"""
+
+
+# ---------------------------------------------------------------------------
+# Helper: select relevant memories via API
+# ---------------------------------------------------------------------------
+
+async def _select_relevant_memories(
+    query: str, manifest: str, names: list[str], limit: int = 5
+) -> list[str]:
+    """Call the API to select which memories are relevant to the query.
+
+    Uses a simple classification prompt. No fork agent needed.
+    Matching cc-haha selectRelevantMemories flow.
+    """
+    import json
+
+    from general_agent.services.api.messages import query_model_without_streaming
+
+    prompt = f"""You are selecting which saved memories are relevant to a question.
+
+User question: {query}
+
+Available memories:
+{manifest}
+
+Return ONLY a JSON array of memory names that are relevant.
+Example: ["user_prefs", "project_deadlines"]
+Limit to {limit} or fewer. Be selective."""
+
+    try:
+        result = await query_model_without_streaming(
+            messages=[{"role": "user", "content": prompt}],
+            system_prompt="",
+            temperature=0.3,
+            max_tokens=200,
+        )
+        text = ""
+        content = result.get("content", "")
+        if isinstance(content, list):
+            for block in content:
+                if block.get("type") == "text":
+                    text += block.get("text", "")
+        else:
+            text = str(content)
+
+        # Extract JSON array from response
+        import re
+        match = re.search(r"\[.*?\]", text, re.DOTALL)
+        if match:
+            selected = json.loads(match.group())
+            return [n for n in selected if n in names][:limit]
+    except Exception:
+        pass
+
+    return names[:limit]
+
