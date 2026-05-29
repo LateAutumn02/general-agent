@@ -320,21 +320,23 @@ class MemoryStore:
 
         return f"""## Memory Review
 
-Review the conversation above and decide if there is anything worth remembering long-term.
+The conversation above may contain information worth remembering. You MUST check.
 
-**Existing memories:**
+Step 1: Read existing memory files first (they're in .claude/memory/).
+Step 2: Then decide if any NEW information should be saved.
+Step 3: Use the Write tool to save new memories. Use the Edit tool to update existing ones.
+Step 4: Write a 1-line summary of what you saved, or "Checked, memories are up to date."
+
+Rules:
+- Each memory file MUST have YAML frontmatter: name, description, type
+- Types: user, feedback, project, reference
+- Do NOT save: code patterns, git history, debug notes, CLAUDE.md content, temp details
+- User names and preferences are type=user. Project decisions are type=project.
+
+Existing memories for reference:
 {existing_text}
 
-**Instructions:**
-1. Read existing memory files to understand what's already saved.
-2. If you find something new worth remembering, write a memory file.
-3. Each memory file must have YAML frontmatter (name, description, type).
-4. Types: user, feedback, project, reference.
-5. Do NOT save: code patterns, git history, debug notes, CLAUDE.md content, temporary task details.
-6. If nothing new is worth saving, respond "Nothing new to remember."
-
-Save new memories to `.claude/memory/<name>.md` using the Write tool.
-Update existing memories with the Edit tool if they need refreshing."""
+Start by reading current memories, then decide what to add or update."""
 
     # --- Parsing ---
 

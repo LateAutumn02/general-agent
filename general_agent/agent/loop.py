@@ -36,6 +36,7 @@ class AgentState:
     memory_store: Any = None
     auto_memory: bool = True
     memory_interval: int = 3  # Extract every N turns (1 = aggressive)
+    is_fork_agent: bool = False  # Auto-allow memory writes in fork agents
     _memory_extracted: bool = field(default=False, repr=False)
     _memory_turns_since: int = field(default=0, repr=False)
 
@@ -60,6 +61,8 @@ async def run_agent(
     if tools is None:
         tools = _get_tool_definitions(state.tool_registry)
 
+    assistant_text = ""
+    state._memory_turns_since += 1  # Count each run_agent() call (cc-haha: per-query)
     while state.turn_count < state.max_turns:
         if state.abort_signal.is_set():
             break
@@ -123,29 +126,20 @@ async def run_agent(
         if not tool_use_blocks:
             # Save user-facing answer before extraction overwrites it
             save_answer = assistant_text
-            # Auto-memory extraction (throttled: every 3 turns, matching cc-haha)
-            state._memory_turns_since += 1
+            # Auto-memory extraction via fork agent (cc-haha pattern)
             if (state.memory_store and state.auto_memory
                     and state._memory_turns_since >= state.memory_interval):
                 state._memory_turns_since = 0
-                state._memory_extracted = False  # Allow re-extraction
+                from general_agent.tasks.fork import create_fork_context, run_forked_agent
+                fork_ctx = create_fork_context(state, agent_id="memory-extract", max_turns=5)
                 prompt = state.memory_store.build_extraction_prompt()
-                state.messages.append({"role": "user", "content": prompt})
-                # Run one more turn for extraction, but return original answer
-                try:
-                    async for _ in query_model_with_streaming(
-                        messages=list(state.messages),
-                        system_prompt=await build_system_prompt(
-                            tools=list(state.tool_registry.get_enabled()),
-                            git_context=state.git_context,
-                            extra_instructions=state.system_prompt_extra,
-                        ),
-                        tools=tools,
-                        signal=state.abort_signal,
-                    ):
-                        pass  # Let agent write memories, consume output
-                except Exception:
-                    pass
+                task = asyncio.create_task(
+                    run_forked_agent(fork_ctx, prompt)
+                )
+                task.add_done_callback(
+                    lambda t: logger.error("Fork extraction failed: %s", t.exception())
+                    if t.exception() else None
+                )
             return save_answer, state.messages
 
         # 4. Execute tools
@@ -155,7 +149,7 @@ async def run_agent(
             args_preview = _format_args(block.get("input", {}))
             if on_progress:
                 on_progress(f"  \033[33m→\033[0m {name} {args_preview}")
-            result = await _execute_tool(block, state.tool_registry, on_permission)
+            result = await _execute_tool(block, state.tool_registry, on_permission, state)
             tool_results.append(result)
 
         # 5. Inject tool_results into conversation
@@ -174,22 +168,27 @@ def _format_args(args: dict[str, Any]) -> str:
     if not args:
         return ""
     # Show file_path or command as the key arg
-    for key in ("command", "file_path", "old_string"):
+    for key in ("command", "file_path", "old_string", "description", "prompt"):
         if key in args:
             val = str(args[key])
             if len(val) > 60:
                 val = val[:57] + "..."
             return val
-    # Fallback: show first arg
+    # Fallback: show first args
     items = list(args.items())[:2]
-    text = " ".join(f"{k}={str(v)[:20]}" for k, v in items)
-    return text[:80]
+    parts = []
+    for k, v in items:
+        s = str(v)
+        parts.append(f"{k}={s[:40] + '...' if len(s) > 40 else s}")
+    text = " ".join(parts)
+    return text[:80] + ("..." if len(text) > 80 else "")
 
 
 async def _execute_tool(
     tool_use: dict[str, Any],
     registry: ToolsRegistry,
     on_permission: Any = None,
+    agent_state: Any = None,
 ) -> dict[str, Any]:
     """Execute a single tool call with permission handling."""
 
@@ -212,7 +211,9 @@ async def _execute_tool(
         return _tool_error(tool_id, f"Permission denied: {perm.message}")
 
     if perm.behavior == "ask":
-        if on_permission and on_permission(name, args):
+        if agent_state and getattr(agent_state, "is_fork_agent", False):
+            pass  # Fork agent: auto-allow (no terminal for user prompt)
+        elif on_permission and on_permission(name, args):
             pass  # User approved
         elif tool.is_read_only(args):
             pass  # Read-only: auto-allow
@@ -221,7 +222,7 @@ async def _execute_tool(
 
     # Execute
     try:
-        result = await tool.call(args)
+        result = await tool.call(args, context=agent_state)
         return tool.map_tool_result_to_block(result.data, tool_id)
     except Exception as e:
         logger.exception("Tool %s failed", name)
