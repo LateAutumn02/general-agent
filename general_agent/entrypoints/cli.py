@@ -358,7 +358,7 @@ async def _run_repl(config) -> None:
 
             if user_input.startswith("/"):
                 # Built-in commands take priority over skills
-                result = _handle_slash(user_input, state)
+                result = await _handle_slash(user_input, state)
                 if result:
                     break
                 if result is not None:  # Handled (returned False = continue REPL)
@@ -391,10 +391,14 @@ async def _run_repl(config) -> None:
                     on_permission=_ask_permission)
 
                 # Show final response with usage
-                for msg in reversed(all_messages):
-                    if msg.get("role") == "assistant":
-                        _print_assistant_response(msg)
-                        break
+                if result_text and ("stopped" in result_text.lower() or "repetition" in result_text.lower()):
+                    print(f"  \033[31m⚠ {result_text}\033[0m")
+                    print("  \033[2mTip: use /compact to compress conversation, /clear to reset.\033[0m")
+                else:
+                    for msg in reversed(all_messages):
+                        if msg.get("role") == "assistant":
+                            _print_assistant_response(msg)
+                            break
 
             except Exception as e:
                 print(f"\n  \033[31mError: {e}\033[0m\n")
@@ -440,7 +444,7 @@ def _show_banner() -> None:
   \033[2mType /help for commands, /exit to quit.\033[0m""")
 
 
-def _handle_slash(cmd: str, state=None) -> bool:
+async def _handle_slash(cmd: str, state=None) -> bool:
     """Handle slash commands. Returns True if the REPL should exit."""
     parts = cmd.split()
     name = parts[0].lower()
@@ -594,6 +598,35 @@ def _handle_slash(cmd: str, state=None) -> bool:
         else:
             from general_agent.bootstrap.state import get_main_loop_model
             print(f"  Current model: {get_main_loop_model()}")
+        return False
+
+    if name == "/sandbox":
+        if len(parts) > 1:
+            if parts[1] in ("on", "enable"):
+                from general_agent.sandbox.settings import toggle_sandbox
+                from general_agent.sandbox.checker import is_sandbox_available
+                toggle_sandbox(True)
+                avail = is_sandbox_available()
+                print(f"  Sandbox: \033[32mON\033[0m" + (" (unavailable on this platform)" if not avail else ""))
+                return False
+            if parts[1] in ("off", "disable"):
+                from general_agent.sandbox.settings import toggle_sandbox
+                toggle_sandbox(False)
+                print(f"  Sandbox: \033[33mOFF\033[0m")
+                return False
+            if parts[1] in ("exclude", "add"):
+                if len(parts) > 2:
+                    from general_agent.sandbox.settings import get_settings
+                    get_settings().excluded_commands.append(parts[2])
+                    print(f"  Excluded: {parts[2]}")
+                return False
+        from general_agent.sandbox.settings import get_settings, is_sandbox_available
+        s = get_settings()
+        print(f"  /sandbox on/off    Toggle sandbox")
+        print(f"  /sandbox exclude <pattern>  Add exclusion")
+        print(f"  Status: {'ON' if s.enabled else 'OFF'}, "
+              f"Platform: {'available' if is_sandbox_available() else 'unavailable'}, "
+              f"Excluded: {s.excluded_commands[:5]}")
         return False
 
     if name == "/clear":

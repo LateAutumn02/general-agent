@@ -30,6 +30,7 @@ class BashTool(Tool):
                 "command": {"type": "string", "description": "The shell command to execute"},
                 "description": {"type": "string", "description": "What this command does"},
                 "timeout": {"type": "integer", "description": "Timeout in milliseconds"},
+                "dangerouslyDisableSandbox": {"type": "boolean", "description": "Bypass sandbox for this command (requires user approval)"},
             },
             "required": ["command"],
         }
@@ -78,9 +79,17 @@ class BashTool(Tool):
         can_use_tool: Any = None,
         on_progress: Any = None,
     ) -> ToolResult:
-        """Execute a shell command and return stdout/stderr."""
+        """Execute a shell command, optionally sandboxed."""
         command = args["command"]
-        timeout = args.get("timeout", 120_000)  # ms
+        timeout = args.get("timeout", 120_000)
+
+        # Sandbox wrapping (skipped if dangerouslyDisableSandbox is set)
+        bypass = args.get("dangerouslyDisableSandbox", False)
+        from general_agent.sandbox.settings import should_use_sandbox, is_sandbox_enabled, get_settings
+        sandboxed = is_sandbox_enabled() and should_use_sandbox(command) and not (bypass and get_settings().allow_unsandboxed)
+        if sandboxed:
+            if not _wrap_sandbox(command):
+                return ToolResult(data={"stdout": "", "stderr": "Sandbox: command blocked", "exit_code": 1, "output": "Sandbox: command blocked (access outside project directory)"})
 
         try:
             result = subprocess.run(
@@ -139,8 +148,42 @@ class BashTool(Tool):
     async def check_permissions(
         self, args: dict[str, Any], context: Any = None
     ) -> PermissionResult:
+        # dangerouslyDisableSandbox: requires explicit approval
+        if args.get("dangerouslyDisableSandbox"):
+            from general_agent.sandbox.settings import get_settings
+            settings = get_settings()
+            if not settings.allow_unsandboxed:
+                return PermissionResult(behavior="deny",
+                    message="Unsandboxed commands are disabled by sandbox settings")
+            return PermissionResult(behavior="ask",
+                message="This command bypasses sandbox. Confirm to proceed.",
+                updated_input=args)
         # Read-only commands auto-allow
         if self.is_read_only(args):
             return PermissionResult(behavior="allow", updated_input=args)
-        # Write commands: ask for confirmation in default mode
         return PermissionResult(behavior="ask", updated_input=args)
+
+
+def _wrap_sandbox(command: str) -> str:
+    """Wrap a command for sandboxed execution. Returns '' if blocked."""
+    import os
+    import shutil
+
+    if os.name == "posix":
+        if shutil.which("seatbelt"):
+            return f"seatbelt -- {command}"
+        if shutil.which("bwrap"):
+            return f"bwrap --ro-bind / / --ro-bind /tmp /tmp --dev /dev --proc /proc -- /bin/sh -c '{command}'"
+
+    # Windows pseudo-sandbox: block commands accessing paths outside project dir
+    if os.name == "nt":
+        import re
+        cwd = os.getcwd().replace("\\", "/").lower()
+        # Check for absolute paths outside project
+        paths = re.findall(r'["\']?([A-Za-z]:(?:\\[^"\'\s]*)+)', command)
+        for p in paths:
+            p_clean = p.replace("\\", "/").lower()
+            if not p_clean.startswith(cwd):
+                return ""  # Blocked
+
+    return command

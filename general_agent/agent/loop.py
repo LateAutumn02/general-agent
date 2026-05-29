@@ -64,7 +64,8 @@ async def run_agent(
         tools = _get_tool_definitions(state.tool_registry)
 
     assistant_text = ""
-    state._memory_turns_since += 1  # Count each run_agent() call (cc-haha: per-query)
+    state.turn_count = 0  # Reset per run_agent() call
+    state._memory_turns_since += 1
     while state.turn_count < state.max_turns:
         if state.abort_signal.is_set():
             break
@@ -94,20 +95,36 @@ async def run_agent(
                 state.messages, model=model, tracking=state._compact_tracking,
                 pct=state.compact_pct,
             ):
-                result = await compact_conversation(state.messages, state, is_auto=True)
-                boundary, summary_msgs = build_post_compact_messages(result)
-                state.messages = summary_msgs
-                if on_progress:
-                    on_progress(f"  Compressed {result.messages_summarized} messages "
-                                f"({result.pre_compact_tokens} → ~{result.post_compact_tokens} tokens)")
-                state._compact_tracking.compacted = True
-                continue
+                try:
+                    result = await compact_conversation(state.messages, state, is_auto=True)
+                    boundary, summary_msgs = build_post_compact_messages(result)
+                    state.messages = summary_msgs
+                    if on_progress:
+                        on_progress(f"  Compressed {result.messages_summarized} msgs "
+                                    f"({result.pre_compact_tokens} → ~{result.post_compact_tokens} tokens)")
+                    state._compact_tracking.compacted = True
+                    continue
+                except Exception:
+                    # Compact failed (fork API error) → fallback to snip
+                    pass
             elif state._compact_tracking.compacted:
                 state._compact_tracking.turn_counter += 1
         except Exception:
             pass
 
-        # Snip: fallback when auto-compact not applicable (cheap, but lossy)
+        # Emergency snip: at 80%, hard-cut regardless of compact success/failure
+        try:
+            from general_agent.compact.snip import snip_messages
+            from general_agent.compact.constants import estimate_tokens, threshold_from_pct
+            emergency = threshold_from_pct(80)
+            if estimate_tokens(state.messages) >= emergency:
+                state.messages, freed = snip_messages(state.messages)
+                if freed > 0 and on_progress:
+                    on_progress(f"  ⚡ Emergency snip: freed ~{freed} tokens")
+        except Exception:
+            pass
+
+        # Snip: regular check at configured threshold
         try:
             from general_agent.compact.snip import try_snip
             state.messages, _ = try_snip(state.messages, model=model, pct=state.snip_pct)
@@ -153,6 +170,10 @@ async def run_agent(
             ):
                 if msg.get("role") == "assistant":
                     state.messages.append(msg)
+                    # Repetition detection: prevent stuck infinite loop
+                    if _is_repeating(state.messages):
+                        logger.warning("Agent repetition detected - breaking loop")
+                        state.abort_signal.set()
                     # Save full transcript to disk (cc-haha sessionTranscript)
                     try:
                         from general_agent.compact.transcript import save_transcript
@@ -219,8 +240,47 @@ async def run_agent(
                 "content": tool_results,
             })
 
-    # Max turns reached
-    return assistant_text or "(Agent stopped - max turns reached)", state.messages
+    # Max turns reached - force one final response without tools
+    if state.abort_signal.is_set():
+        return "Agent stopped: repetition detected", state.messages
+    try:
+        async for msg in query_model_with_streaming(
+            messages=list(state.messages),
+            system_prompt=await build_system_prompt(
+                tools=[],
+                git_context=state.git_context,
+                extra_instructions=state.system_prompt_extra,
+            ),
+            model=model,
+            tools=[],
+            signal=state.abort_signal,
+        ):
+            if msg.get("role") == "assistant":
+                c = msg.get("content", "")
+                if isinstance(c, list):
+                    for b in c:
+                        if b.get("type") == "text":
+                            assistant_text = b.get("text", "")
+                            break
+    except Exception:
+        pass
+    return assistant_text or "Response truncated (max turns reached)", state.messages
+
+
+def _is_repeating(messages: list[dict]) -> bool:
+    """Detect if the agent is stuck repeating the same response."""
+    assistant_texts = []
+    for m in reversed(messages):
+        if m.get("role") == "assistant":
+            c = m.get("content", "")
+            if isinstance(c, list):
+                txt = " ".join(b.get("text", "") for b in c if b.get("type") == "text")
+            else:
+                txt = str(c)
+            assistant_texts.append(txt[:200])  # Compare first 200 chars
+            if len(assistant_texts) >= 2:
+                break
+    return len(assistant_texts) >= 2 and assistant_texts[0] == assistant_texts[1]
 
 
 def _format_args(args: dict[str, Any]) -> str:

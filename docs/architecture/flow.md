@@ -140,9 +140,11 @@ flowchart TD
 ✅ Phase 7 已完成:
   Skills (SKILL.md 扫描 + 系统提示词注入 + 斜杠命令)
 
+✅ Phase 8 已完成:
+  Sandbox (平台检测 + BashTool 集成 + /sandbox 命令 + 跳过检查)
+
 ⏳ 后续待实现:
   MCP 协议 (stdio 传输 + 基础工具)
-  沙箱安全 (Seatbelt / bwrap)
 
 ❌ v1 暂不实现:
   多 Agent 编排 ──────→ 单 Agent 足够
