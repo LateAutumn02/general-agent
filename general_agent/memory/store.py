@@ -80,6 +80,24 @@ class MemoryStore:
     def ensure_dir(self) -> None:
         os.makedirs(self.root, exist_ok=True)
 
+    # --- Toggle persistence ---
+
+    def is_enabled(self) -> bool:
+        """Check if auto-memory is enabled. Default: False (opt-in)."""
+        flag_path = os.path.join(self.root, ".memory_enabled")
+        try:
+            with open(flag_path, encoding="utf-8") as f:
+                return f.read().strip() == "1"
+        except FileNotFoundError:
+            return False
+
+    def set_enabled(self, val: bool) -> None:
+        """Persist auto-memory on/off setting."""
+        self.ensure_dir()
+        flag_path = os.path.join(self.root, ".memory_enabled")
+        with open(flag_path, "w", encoding="utf-8") as f:
+            f.write("1" if val else "0")
+
     # --- CRUD ---
 
     def write(self, name: str, content: str, *,
@@ -237,6 +255,46 @@ class MemoryStore:
                 )
 
             parts.append(f"### {name}  `{tag}`")
+            content = mem.get("content", "")
+            if len(content) > 2000:
+                content = content[:1997] + "..."
+            parts.append(content)
+            parts.append("")
+
+        return "\n".join(parts)
+
+    # --- Format only relevant memories (per-query) ---
+
+    def format_relevant(self, names: list[str]) -> str:
+        """Format only selected memories + behavioral instructions + staleness warnings."""
+        parts = [BEHAVIOR_INSTRUCTIONS]
+
+        if not names:
+            return BEHAVIOR_INSTRUCTIONS
+
+        memories = self.load_all()
+        mem_list = self.list_all()
+
+        parts.append("\n## Relevant Memories\n")
+        for entry in mem_list:
+            if entry["name"] not in names:
+                continue
+            mem = memories.get(entry["name"])
+            if not mem:
+                continue
+
+            age = entry.get("age_days", 0)
+            fresh = "today" if age == 0 else "yesterday" if age == 1 else f"{age} days ago"
+            tag = f"[{mem.get('type', 'user')}] • {fresh}"
+
+            if age > 1:
+                parts.append(
+                    f"<system-reminder>\n"
+                    f"  This memory is {age} days old. Verify against current code.\n"
+                    f"</system-reminder>"
+                )
+
+            parts.append(f"### {entry['name']}  `{tag}`")
             content = mem.get("content", "")
             if len(content) > 2000:
                 content = content[:1997] + "..."
@@ -498,4 +556,25 @@ Limit to {limit} or fewer. Be selective."""
         pass
 
     return names[:limit]
+
+
+# ---------------------------------------------------------------------------
+# Team Memory (stub - to be implemented with multi-agent)
+# ---------------------------------------------------------------------------
+
+class TeamMemory:
+    """Team-shared memory directory. Stub for multi-agent support.
+
+    Reference: cc-haha src/memdir/teamMemPaths.ts
+    """
+
+    def __init__(self, root: str):
+        self.root = os.path.join(root, "team")
+
+    def ensure_dir(self) -> None:
+        os.makedirs(self.root, exist_ok=True)
+
+    # TODO: Implement team memory loading, validation, scope resolution
+    # when multi-agent system is available.
+
 
