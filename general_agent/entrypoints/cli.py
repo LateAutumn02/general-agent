@@ -319,11 +319,23 @@ async def _run_repl(config) -> None:
         # For now, just touch lock and skip (no fork agent to run it automatically)
         memory_store.touch_dream_lock()
 
+    # Load skills
+    from general_agent.skills.loader import scan_skills, format_skills_for_prompt, get_slash_commands
+    skills = scan_skills(os.getcwd())
+    skills_text = format_skills_for_prompt(skills)
+    skill_cmds = get_slash_commands(skills)
+    if skills:
+        print(f"  Loaded {len(skills)} skill(s): {', '.join(s.name for s in skills)}")
+
+    prompt_extra = memory_text
+    if skills_text:
+        prompt_extra += "\n" + skills_text
+
     # Shared AgentState across turns (cc-haha: preserves conversation)
     state = AgentState(
         tool_registry=registry,
         git_context=git_context,
-        system_prompt_extra=memory_text,
+        system_prompt_extra=prompt_extra,
         memory_store=memory_store,
         auto_memory=memory_store.is_enabled(),
         max_turns=10,
@@ -345,8 +357,26 @@ async def _run_repl(config) -> None:
                 readline.write_history_file(hist_file)
 
             if user_input.startswith("/"):
-                if _handle_slash(user_input, state):
+                # Built-in commands take priority over skills
+                result = _handle_slash(user_input, state)
+                if result:
                     break
+                if result is not None:  # Handled (returned False = continue REPL)
+                    continue
+                # Fallback: check if this is a skill invocation
+                skill_name = user_input[1:].split()[0].lower()
+                if skill_name in skill_cmds:
+                    skill = skill_cmds[skill_name]
+                    state.messages.append({"role": "user", "content": skill.prompt})
+                    state.messages.append({"role": "user", "content": f"Execute the skill: {skill.name}"})
+                    print(f"  \033[2mSkill '{skill.name}' activated.\033[0m")
+                    result_text, all_messages = await run_agent(
+                        state, on_progress=lambda msg: print(msg, flush=True))
+                    for msg in reversed(all_messages):
+                        if msg.get("role") == "assistant":
+                            _print_assistant_response(msg)
+                            break
+                    continue
                 continue
 
             print()
@@ -579,7 +609,7 @@ def _handle_slash(cmd: str, state=None) -> bool:
         return False
 
     print(f"  Unknown command: {name}. Type /help for available commands.")
-    return False
+    return None  # Let caller check skills
 
 
 def _print_assistant_response(msg: dict[str, Any]) -> None:
