@@ -156,9 +156,12 @@ general-agent v1 对记忆系统做了最大程度的简化，仅保留最核心
 - **按需检索** — API 侧查询选 5 条最相关记忆
 - **Session Memory** — 每次会话自动保存笔记（9 节模板）
 - **AutoDream** — 启动时检查 24h + ≥3 条记忆，提示整理
-- **/memory** 命令 — `list` / `refresh`
+- **节流** — 默认每 3 轮提取，`/memory aggressive` 切每轮
+- **持久化开关** — `/memory on`/`off` 保存到 `.memory_enabled` 文件
+- **Team memory** — 空壳（等 multi-agent 实现）
+- **/memory** 命令 — `on`/`off`/`aggressive`/`throttle`/`list`/`refresh`
 
-不做：分叉Agent提取（依赖 multi-agent，留空写入文档）
+不做：分叉Agent提取（依赖 multi-agent）
 
 ---
 
