@@ -33,9 +33,11 @@ class AgentState:
     abort_signal: asyncio.Event = field(default_factory=asyncio.Event)
     system_prompt_extra: str = ""
     git_context: str = ""
-    memory_store: Any = None  # MemoryStore for auto-extraction
-    auto_memory: bool = True  # Enable auto-extraction
-    _memory_extracted: bool = field(default=False, repr=False)  # Track extraction state
+    memory_store: Any = None
+    auto_memory: bool = True
+    memory_interval: int = 3  # Extract every N turns (1 = aggressive)
+    _memory_extracted: bool = field(default=False, repr=False)
+    _memory_turns_since: int = field(default=0, repr=False)
 
 
 async def run_agent(
@@ -64,11 +66,28 @@ async def run_agent(
 
         state.turn_count += 1
 
-        # 1. Build system prompt
+        # 1. Build system prompt with relevant memories
+        # Per-query: select up to 5 relevant memories (cc-haha pattern)
+        memory_extra = state.system_prompt_extra
+        if state.memory_store and state.auto_memory:
+            user_msg = ""
+            for m in reversed(state.messages):
+                if m.get("role") == "user":
+                    c = m.get("content", "")
+                    user_msg = c if isinstance(c, str) else ""
+                    break
+            if user_msg:
+                try:
+                    relevant = await state.memory_store.find_relevant(user_msg)
+                    if relevant:
+                        memory_extra = state.memory_store.format_relevant(relevant)
+                except Exception:
+                    pass
+
         system_prompt = await build_system_prompt(
             tools=list(state.tool_registry.get_enabled()),
             git_context=state.git_context,
-            extra_instructions=state.system_prompt_extra,
+            extra_instructions=memory_extra,
         )
 
         # 2. Call API
@@ -102,15 +121,32 @@ async def run_agent(
 
         # 3. If no tool_use blocks → handle auto-memory then return
         if not tool_use_blocks:
-            # Auto-memory extraction: ask agent to review and save memories
+            # Save user-facing answer before extraction overwrites it
+            save_answer = assistant_text
+            # Auto-memory extraction (throttled: every 3 turns, matching cc-haha)
+            state._memory_turns_since += 1
             if (state.memory_store and state.auto_memory
-                    and not state._memory_extracted
-                    and state.turn_count > 1):
-                state._memory_extracted = True
+                    and state._memory_turns_since >= state.memory_interval):
+                state._memory_turns_since = 0
+                state._memory_extracted = False  # Allow re-extraction
                 prompt = state.memory_store.build_extraction_prompt()
                 state.messages.append({"role": "user", "content": prompt})
-                continue  # Let agent handle extraction, then finish
-            return assistant_text, state.messages
+                # Run one more turn for extraction, but return original answer
+                try:
+                    async for _ in query_model_with_streaming(
+                        messages=list(state.messages),
+                        system_prompt=await build_system_prompt(
+                            tools=list(state.tool_registry.get_enabled()),
+                            git_context=state.git_context,
+                            extra_instructions=state.system_prompt_extra,
+                        ),
+                        tools=tools,
+                        signal=state.abort_signal,
+                    ):
+                        pass  # Let agent write memories, consume output
+                except Exception:
+                    pass
+            return save_answer, state.messages
 
         # 4. Execute tools
         tool_results = []

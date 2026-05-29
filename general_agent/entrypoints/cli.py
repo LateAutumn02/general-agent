@@ -325,7 +325,7 @@ async def _run_repl(config) -> None:
         git_context=git_context,
         system_prompt_extra=memory_text,
         memory_store=memory_store,
-        auto_memory=True,
+        auto_memory=memory_store.is_enabled(),
         max_turns=10,
     )
     print()
@@ -431,6 +431,31 @@ def _handle_slash(cmd: str, state=None) -> bool:
         return False
 
     if name == "/memory":
+        if len(parts) > 1 and parts[1] in ("on", "enable"):
+            if state is not None:
+                state.auto_memory = True
+                state._memory_extracted = False
+                if state.memory_store:
+                    state.memory_store.set_enabled(True)
+            print("  \033[32mAuto-memory enabled (persisted).\033[0m")
+            return False
+        if len(parts) > 1 and parts[1] in ("off", "disable"):
+            if state is not None:
+                state.auto_memory = False
+                if state.memory_store:
+                    state.memory_store.set_enabled(False)
+            print("  \033[33mAuto-memory disabled (persisted).\033[0m")
+            return False
+        if len(parts) > 1 and parts[1] in ("aggressive", "every"):
+            if state is not None:
+                state.memory_interval = 1
+                print("  \033[33mMemory: aggressive mode (extract every turn).\033[0m")
+            return False
+        if len(parts) > 1 and parts[1] in ("throttle", "throttled"):
+            if state is not None:
+                state.memory_interval = 3
+                print("  \033[2mMemory: throttled mode (extract every 3 turns).\033[0m")
+            return False
         if len(parts) > 1 and parts[1] in ("list", "ls", "show"):
             from general_agent.memory.store import MemoryStore
             store = MemoryStore()
