@@ -142,7 +142,7 @@ Tool:
 | 程序初始化 | `initialization/` | Phase 1 已完成 |
 | 多 Agent 编排 | `multi-agent/` | Phase 5 已完成 |
 | MCP 协议 | `mcp/` | 已完成 |
-| 上下文压缩 | `compact/` | 已完成 |
+| 上下文压缩 | `compact/` | Phase 6 已完成 |
 | 沙箱安全 | `sandbox/` | 已完成 |
 | API 集成 | `api/` | Phase 1 已完成 |
 

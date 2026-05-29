@@ -31,7 +31,7 @@ DEEPSEEK_OPENAI_BASE_URL = "https://api.deepseek.com"
 DEEPSEEK_ANTHROPIC_BASE_URL = "https://api.deepseek.com/anthropic"
 
 # Context window
-MODEL_CONTEXT_WINDOW = 128_000
+MODEL_CONTEXT_WINDOW = 1_000_000  # DeepSeek V4 Pro: 1M context
 
 # Streaming watchdog
 STREAM_IDLE_TIMEOUT_SECONDS = 90

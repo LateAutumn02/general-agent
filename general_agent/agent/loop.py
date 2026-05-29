@@ -35,8 +35,10 @@ class AgentState:
     git_context: str = ""
     memory_store: Any = None
     auto_memory: bool = True
-    memory_interval: int = 3  # Extract every N turns (1 = aggressive)
-    is_fork_agent: bool = False  # Auto-allow memory writes in fork agents
+    memory_interval: int = 3
+    is_fork_agent: bool = False
+    compact_pct: int = 50  # Auto-compact at 50% of context window
+    snip_pct: int = 80  # Snip at 80% of context window
     _memory_extracted: bool = field(default=False, repr=False)
     _memory_turns_since: int = field(default=0, repr=False)
 
@@ -68,6 +70,49 @@ async def run_agent(
             break
 
         state.turn_count += 1
+
+        # 0. Pre-API compaction chain (truncate → microcompact → autoCompact → snip)
+        try:
+            from general_agent.compact.micro_compact import microcompact, truncate_large_results
+            truncate_large_results(state.messages)
+            state.messages = microcompact(state.messages)
+        except Exception:
+            pass
+
+        try:
+            from general_agent.compact.compact import (
+                compact_conversation,
+                build_post_compact_messages,
+                should_auto_compact,
+            )
+            from general_agent.compact.state import AutoCompactTrackingState
+
+            if not hasattr(state, "_compact_tracking"):
+                state._compact_tracking = AutoCompactTrackingState()
+
+            if await should_auto_compact(
+                state.messages, model=model, tracking=state._compact_tracking,
+                pct=state.compact_pct,
+            ):
+                result = await compact_conversation(state.messages, state, is_auto=True)
+                boundary, summary_msgs = build_post_compact_messages(result)
+                state.messages = summary_msgs
+                if on_progress:
+                    on_progress(f"  Compressed {result.messages_summarized} messages "
+                                f"({result.pre_compact_tokens} → ~{result.post_compact_tokens} tokens)")
+                state._compact_tracking.compacted = True
+                continue
+            elif state._compact_tracking.compacted:
+                state._compact_tracking.turn_counter += 1
+        except Exception:
+            pass
+
+        # Snip: fallback when auto-compact not applicable (cheap, but lossy)
+        try:
+            from general_agent.compact.snip import try_snip
+            state.messages, _ = try_snip(state.messages, model=model, pct=state.snip_pct)
+        except Exception:
+            pass
 
         # 1. Build system prompt with relevant memories
         # Per-query: select up to 5 relevant memories (cc-haha pattern)
@@ -108,6 +153,12 @@ async def run_agent(
             ):
                 if msg.get("role") == "assistant":
                     state.messages.append(msg)
+                    # Save full transcript to disk (cc-haha sessionTranscript)
+                    try:
+                        from general_agent.compact.transcript import save_transcript
+                        save_transcript([msg])
+                    except Exception:
+                        pass
                     content = msg.get("content", [])
                     for block in content if isinstance(content, list) else []:
                         if block.get("type") == "text":
@@ -115,9 +166,18 @@ async def run_agent(
                         elif block.get("type") == "tool_use":
                             tool_use_blocks.append(block)
         except Exception as e:
+            err_str = str(e).lower()
+            # Reactive compact: if prompt too long (413), snip and retry
+            if any(kw in err_str for kw in ("prompt", "too long", "413", "context_window_exceeded")):
+                from general_agent.compact.reactive import try_reactive_compact
+                state.messages, freed = try_reactive_compact(state.messages)
+                if freed > 0 and state.turn_count < state.max_turns:
+                    logger.info("Reactive compact: freed ~%d tokens, retrying", freed)
+                    await asyncio.sleep(1)
+                    continue
+
             logger.error("API call failed (turn %d): %s", state.turn_count, e)
             if state.turn_count < state.max_turns:
-                # Retry next turn
                 await asyncio.sleep(1)
                 continue
             return f"Error after {state.turn_count} retries: {e}", state.messages
