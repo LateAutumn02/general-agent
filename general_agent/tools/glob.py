@@ -67,13 +67,19 @@ class GlobTool(Tool):
             else:
                 output = "\n".join(matches) if matches else "(no matches)"
 
+            # Display: first 8 files
+            d_lines = output.split("\n")[:8]
+            if len(d_lines) < len(output.split("\n")):
+                d_lines.append(f"\033[2m… +{len(output.split('\n')) - 8} files\033[0m")
+            display = "\n".join(d_lines)
             return ToolResult(data={
                 "output": output,
+                "display": display,
                 "count": len(matches),
                 "truncated": len(matches) > 500,
             })
         except Exception as e:
-            return ToolResult(data={"output": f"Error: {e}", "count": 0})
+            return ToolResult(data={"output": f"Error: {e}", "count": 0, "display": f"\033[31mError: {e}\033[0m"})
 
     def map_tool_result_to_block(self, output: Any, tool_use_id: str) -> dict:
         text = output.get("output", str(output)) if isinstance(output, dict) else str(output)

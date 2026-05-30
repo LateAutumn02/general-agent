@@ -104,7 +104,7 @@ def get_total_api_duration_ms() -> int:
 
 def get_main_loop_model() -> str:
     from general_agent.constants.models import DEFAULT_MODEL
-    return _state["main_loop_model"] or os.environ.get("GENERAL_AGENT_MODEL", DEFAULT_MODEL)
+    return _state["main_loop_model"] or os.environ.get("MODEL", DEFAULT_MODEL)
 
 
 def get_settings() -> dict[str, Any]:

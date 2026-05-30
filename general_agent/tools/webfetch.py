@@ -62,7 +62,7 @@ class WebFetchTool(Tool):
             if url.startswith("http://"):
                 url = url.replace("http://", "https://", 1)
 
-            async with httpx.AsyncClient(timeout=15, follow_redirects=True) as client:
+            async with httpx.AsyncClient(timeout=10.0, follow_redirects=True) as client:
                 response = await client.get(
                     url,
                     headers={"User-Agent": "general-agent/0.1.0"},

@@ -85,11 +85,17 @@ class GrepTool(Tool):
                 output += f"\n... ({len(out_lines) - head_limit} more matches)"
             if not output:
                 output = "(no matches)"
-            return ToolResult(data=output)
+            # Display: first 5 lines only
+            lines = output.split("\n")
+            if len(lines) > 5:
+                display = "\n".join(lines[:5]) + f"\n\033[2m… +{len(lines) - 5} lines\033[0m"
+            else:
+                display = output
+            return ToolResult(data={"output": output, "display": display})
         except (FileNotFoundError, subprocess.SubprocessError):
             return await self._fallback_grep(args)
         except subprocess.TimeoutExpired:
-            return ToolResult(data="(search timed out)")
+            return ToolResult(data={"output": "(search timed out)", "display": "(search timed out)"})
 
     @staticmethod
     def _find_ripgrep() -> str | None:
@@ -131,9 +137,9 @@ class GrepTool(Tool):
                 output = "\n".join(lines[:head_limit]) + f"\n... ({len(lines) - head_limit} more)"
             if not output:
                 output = "(no matches)"
-            return ToolResult(data=output)
+            return ToolResult(data={"output": output, "display": output})
         except subprocess.TimeoutExpired:
-            return ToolResult(data="(search timed out)")
+            return ToolResult(data={"output": "(search timed out)", "display": "(search timed out)"})
 
     async def _fallback_findstr(self, pattern: str, search_path: str,
                                  case_insensitive: bool, head_limit: int) -> ToolResult:
@@ -171,9 +177,9 @@ class GrepTool(Tool):
                 output += f"\n... ({len(lines) - head_limit} more matches)"
             if not output:
                 output = "(no matches)"
-            return ToolResult(data=output)
+            return ToolResult(data={"output": output, "display": output})
         except subprocess.SubprocessError:
-            return ToolResult(data="(grep tool not available - install ripgrep or grep)")
+            return ToolResult(data={"output": "(grep tool not available)", "display": "(grep tool not available)"})
 
     def map_tool_result_to_block(self, output: Any, tool_use_id: str) -> dict:
         if isinstance(output, dict):

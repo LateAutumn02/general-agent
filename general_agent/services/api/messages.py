@@ -3,7 +3,7 @@
 query_model() yields stream events + assembled messages.
 Non-streaming wrapper returns a single dict.
 
-Provider selection: reads GENERAL_AGENT_PROVIDER from env.
+Provider selection: reads PROVIDER from env.
   "anthropic" → Anthropic Messages API (DeepSeek /anthropic endpoint)
   default     → OpenAI Chat Completions (DeepSeek /v1 endpoint)
 """
@@ -16,13 +16,13 @@ import os
 import time
 from typing import Any, AsyncGenerator
 
-from general_agent.constants.models import DEFAULT_MODEL
+from general_agent.constants.models import DEFAULT_MODEL, DEEPSEEK_BASE_URL
 
 logger = logging.getLogger("general_agent.api")
 
 
 def _get_provider() -> str:
-    return os.environ.get("GENERAL_AGENT_PROVIDER", "openai")
+    return os.environ.get("PROVIDER", "openai")
 
 
 # ---------------------------------------------------------------------------
@@ -41,7 +41,7 @@ async def query_model_without_streaming(
 ) -> dict[str, Any]:
     """Non-streaming query. Dispatches to provider-specific implementation."""
     if not model:
-        model = os.environ.get("GENERAL_AGENT_MODEL", DEFAULT_MODEL)
+        model = os.environ.get("MODEL", DEFAULT_MODEL)
 
     if _get_provider() == "anthropic":
         from general_agent.services.api.messages_anthropic import (
@@ -69,8 +69,8 @@ async def query_model_without_streaming(
     from openai import OpenAI
 
     client = OpenAI(
-        api_key=os.environ.get("DEEPSEEK_API_KEY", ""),
-        base_url=os.environ.get("DEEPSEEK_BASE_URL", "https://api.deepseek.com"),
+        api_key=os.environ.get("API_KEY", ""),
+        base_url=os.environ.get("BASE_URL", DEEPSEEK_BASE_URL),
     )
 
     start = time.monotonic()
@@ -110,7 +110,7 @@ async def query_model_with_streaming(
 ) -> AsyncGenerator[dict[str, Any], None]:
     """Streaming query. Dispatches to provider-specific implementation."""
     if not model:
-        model = os.environ.get("GENERAL_AGENT_MODEL", DEFAULT_MODEL)
+        model = os.environ.get("MODEL", DEFAULT_MODEL)
 
     if _get_provider() == "anthropic":
         async for entry in _query_anthropic(
@@ -165,7 +165,7 @@ async def _query_openai(
         dict with type="stream_event" / role="assistant" / type="system_error"
     """
     if not model:
-        model = os.environ.get("DEEPSEEK_MODEL", DEFAULT_MODEL)
+        model = os.environ.get("MODEL", DEFAULT_MODEL)
 
     api_messages = _build_api_messages(messages, system_prompt)
 
@@ -183,8 +183,8 @@ async def _query_openai(
     from openai import AsyncOpenAI
 
     client = AsyncOpenAI(
-        api_key=os.environ.get("DEEPSEEK_API_KEY", ""),
-        base_url=os.environ.get("DEEPSEEK_BASE_URL", "https://api.deepseek.com"),
+        api_key=os.environ.get("API_KEY", ""),
+        base_url=os.environ.get("BASE_URL", DEEPSEEK_BASE_URL),
     )
 
     start = time.monotonic()
@@ -377,8 +377,5 @@ def _log_usage(model: str, usage: dict[str, int], duration_ms: int, ttfb_ms: flo
         "API call complete: model=%s input=%d output=%d duration=%dms ttfb=%.0fms",
         model, inp, out, duration_ms, ttfb_ms,
     )
-    from general_agent.bootstrap.state import add_to_total_api_duration, add_to_total_cost_usd
+    from general_agent.bootstrap.state import add_to_total_api_duration
     add_to_total_api_duration(duration_ms)
-    # DeepSeek pricing: ~$0.27/1M input, ~$1.10/1M output
-    cost = (inp / 1_000_000) * 0.27 + (out / 1_000_000) * 1.10
-    add_to_total_cost_usd(cost)

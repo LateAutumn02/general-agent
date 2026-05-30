@@ -88,10 +88,14 @@ class FileReadTool(Tool):
                 selected = lines[offset - 1 :]
 
             content = "".join(selected)
-            # Add line numbers
+            # Add line numbers (max 10 lines for display)
+            MAX_DISPLAY = 10
             numbered = []
-            for i, line in enumerate(selected, start=offset):
+            display_count = min(len(selected), MAX_DISPLAY)
+            for i, line in enumerate(selected[:display_count], start=offset):
                 numbered.append(f"{i:6d}\t{line.rstrip()}")
+            if len(selected) > MAX_DISPLAY:
+                numbered.append(f"      \t\033[2m… +{len(selected) - MAX_DISPLAY} lines\033[0m")
             display = "\n".join(numbered)
 
             return ToolResult(data={
