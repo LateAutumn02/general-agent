@@ -268,7 +268,12 @@ async def run_agent(
 
 
 def _is_repeating(messages: list[dict]) -> bool:
-    """Detect if the agent is stuck repeating the same response."""
+    """Detect if the agent is stuck repeating the exact same response.
+
+    Requires 5 consecutive identical assistant responses.
+    This is intentionally conservative — false positives harm
+    multi-step tool operations.
+    """
     assistant_texts = []
     for m in reversed(messages):
         if m.get("role") == "assistant":
@@ -277,10 +282,12 @@ def _is_repeating(messages: list[dict]) -> bool:
                 txt = " ".join(b.get("text", "") for b in c if b.get("type") == "text")
             else:
                 txt = str(c)
-            assistant_texts.append(txt[:200])  # Compare first 200 chars
-            if len(assistant_texts) >= 2:
+            assistant_texts.append(txt)
+            if len(assistant_texts) >= 5:
                 break
-    return len(assistant_texts) >= 2 and assistant_texts[0] == assistant_texts[1]
+    if len(assistant_texts) < 5:
+        return False
+    return len(set(assistant_texts)) == 1
 
 
 def _format_args(args: dict[str, Any]) -> str:

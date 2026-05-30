@@ -31,6 +31,9 @@ dev = [
 general-agent = "general_agent.entrypoints.cli:cli_main"
 glagent = "general_agent.entrypoints.cli:cli_main"
 
+[tool.setuptools.packages.find]
+include = ["general_agent*"]
+
 [tool.ruff]
 line-length = 100
 target-version = "py312"

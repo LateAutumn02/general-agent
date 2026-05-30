@@ -60,7 +60,11 @@ class GrepTool(Tool):
         case_insensitive = args.get("-i", False)
         head_limit = args.get("head_limit", 100)
 
-        cmd = [self._find_ripgrep(), "--no-heading", "--line-number", "--color=never"]
+        rg = self._find_ripgrep()
+        if rg is None:
+            return await self._fallback_grep(args)
+
+        cmd = [rg, "--no-heading", "--line-number", "--color=never"]
         if case_insensitive:
             cmd.append("-i")
         if glob_filter:
@@ -81,21 +85,21 @@ class GrepTool(Tool):
                 output += f"\n... ({len(out_lines) - head_limit} more matches)"
             if not output:
                 output = "(no matches)"
-            return ToolResult(data={"output": output, "matches": len(out_lines)})
+            return ToolResult(data=output)
         except (FileNotFoundError, subprocess.SubprocessError):
             return await self._fallback_grep(args)
         except subprocess.TimeoutExpired:
-            return ToolResult(data={"output": "(search timed out)", "matches": 0})
+            return ToolResult(data="(search timed out)")
 
     @staticmethod
-    def _find_ripgrep() -> str:
-        """Find ripgrep binary."""
+    def _find_ripgrep() -> str | None:
+        """Find ripgrep binary. Returns None if not found."""
         for name in ("rg", "rg.exe"):
             for path in os.environ.get("PATH", "").split(os.pathsep):
                 candidate = os.path.join(path, name)
                 if os.path.isfile(candidate):
                     return candidate
-        return "rg"  # Hope it's in PATH
+        return None
 
     async def _fallback_grep(self, args: dict[str, Any]) -> ToolResult:
         """Use grep/findstr as fallback when ripgrep not available."""
@@ -127,17 +131,33 @@ class GrepTool(Tool):
                 output = "\n".join(lines[:head_limit]) + f"\n... ({len(lines) - head_limit} more)"
             if not output:
                 output = "(no matches)"
-            return ToolResult(data={"output": output, "matches": len(lines)})
+            return ToolResult(data=output)
         except subprocess.TimeoutExpired:
-            return ToolResult(data={"output": "(search timed out)", "matches": 0})
+            return ToolResult(data="(search timed out)")
 
     async def _fallback_findstr(self, pattern: str, search_path: str,
                                  case_insensitive: bool, head_limit: int) -> ToolResult:
-        """Windows: use findstr.exe as fallback."""
-        cmd = ["findstr", "/s", "/n"]
+        """Windows: use findstr.exe as fallback.
+
+        IMPORTANT: findstr treats ``/`` as an option prefix, so paths MUST
+        use backslashes on Windows. The ``/c:`` flag quotes the literal pattern.
+        """
+        # Normalize to backslashes for findstr compatibility
+        search_path = search_path.replace("/", "\\")
+
+        # If search_path is a file, target it directly; if directory, add wildcard
+        if os.path.isfile(search_path):
+            target = search_path
+        elif os.path.isdir(search_path):
+            target = os.path.join(search_path, "*")
+        else:
+            target = search_path  # Trust the user's path
+
+        cmd = ["findstr", "/n"]
         if case_insensitive:
             cmd.append("/i")
-        cmd.extend([pattern, os.path.join(search_path, "*")])
+        # Use /c: for literal pattern to avoid regex issues with findstr
+        cmd.extend(["/c:" + pattern, target])
 
         try:
             result = subprocess.run(
@@ -151,13 +171,13 @@ class GrepTool(Tool):
                 output += f"\n... ({len(lines) - head_limit} more matches)"
             if not output:
                 output = "(no matches)"
-            return ToolResult(data={"output": output, "matches": len(lines)})
+            return ToolResult(data=output)
         except subprocess.SubprocessError:
-            return ToolResult(data={
-                "output": "(grep tool not available - install ripgrep or grep)",
-                "matches": 0,
-            })
+            return ToolResult(data="(grep tool not available - install ripgrep or grep)")
 
     def map_tool_result_to_block(self, output: Any, tool_use_id: str) -> dict:
-        text = output.get("output", str(output)) if isinstance(output, dict) else str(output)
+        if isinstance(output, dict):
+            text = output.get("output", str(output))
+        else:
+            text = str(output)
         return {"type": "tool_result", "tool_use_id": tool_use_id, "content": text, "is_error": False}

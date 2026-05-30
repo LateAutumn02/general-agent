@@ -49,6 +49,53 @@ def create_fork_context(
     )
 
 
+def _strip_pending_tool_uses(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Remove unresolved tool_use blocks from the last assistant message.
+
+    The parent conversation may end with an assistant message that triggered
+    THIS fork (e.g. Agent tool_use).  Sending that to the API without a
+    corresponding tool_result would be rejected.
+
+    Returns a clean copy suitable for the child agent's context.
+    """
+    if not messages:
+        return []
+
+    cleaned = []
+    pending_ids: set[str] = set()
+
+    # Collect all pending tool_use IDs that don't have a tool_result yet
+    for m in messages:
+        role = m.get("role", "")
+        content = m.get("content", [])
+        if isinstance(content, list):
+            for block in content:
+                if block.get("type") == "tool_use":
+                    pending_ids.add(block.get("id", ""))
+                elif block.get("type") == "tool_result":
+                    pending_ids.discard(block.get("tool_use_id", ""))
+
+    # Strip unresolved tool_use blocks from the last assistant message
+    for i, m in enumerate(messages):
+        role = m.get("role", "")
+        if role == "assistant" and i == len(messages) - 1:
+            content = m.get("content", [])
+            if isinstance(content, list):
+                filtered = [b for b in content
+                            if b.get("type") != "tool_use"
+                            or b.get("id", "") not in pending_ids]
+                # Drop the message entirely if stripping left it empty
+                # (API rejects assistant messages with no content AND no tool_calls)
+                if not filtered:
+                    continue
+                if filtered != content:
+                    cleaned.append({**m, "content": filtered})
+                    continue
+        cleaned.append(m)
+
+    return cleaned
+
+
 def _new_registry():
     """Create a new tool registry when parent state is unavailable."""
     from general_agent.tools.registry import ToolsRegistry
@@ -96,7 +143,10 @@ async def run_forked_agent(
 
     # Create child AgentState with prompt
     # Prepend parent conversation so fork can see context (cc-haha CacheSafeParams)
-    child_messages = list(ctx.parent_messages) + [{"role": "user", "content": prompt}]
+    # IMPORTANT: exclude pending tool_use from parent (last assistant message that
+    # triggered this fork may have unresolved Agent tool_use → API rejects it)
+    safe_parent = _strip_pending_tool_uses(ctx.parent_messages)
+    child_messages = safe_parent + [{"role": "user", "content": prompt}]
     child_state = AgentState(
         messages=child_messages,
         tool_registry=ctx.tool_registry,

@@ -157,9 +157,9 @@ async def _run_cli(argv: list[str]) -> None:
             messages=[{"role": "user", "content": args.prompt}],
             tool_registry=registry,
             git_context=system_prompt,
-            max_turns=5,
+            max_turns=10,
         )
-        result_text, _ = await run_agent(state)
+        result_text, _ = await run_agent(state, on_permission=lambda n, a: True)
         if result_text:
             _stream_text(result_text)
         print()
@@ -180,9 +180,9 @@ async def _run_cli(argv: list[str]) -> None:
             messages=[{"role": "user", "content": args.prompt}],
             tool_registry=registry,
             git_context=system_prompt,
-            max_turns=5,
+            max_turns=10,
         )
-        result_text, all_msgs = await run_agent(state)
+        result_text, all_msgs = await run_agent(state, on_permission=lambda n, a: True)
         for msg in reversed(all_msgs):
             if msg.get("role") == "assistant":
                 _print_assistant_response(msg)
