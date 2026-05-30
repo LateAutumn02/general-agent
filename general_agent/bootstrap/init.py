@@ -131,7 +131,14 @@ async def _do_init() -> None:
     # (Phase 1: stub - will add OAuth, IDE detection, repo detection later)
     # TODO: preconnectAnthropicApi() - TCP+TLS preconnect
 
-    # 6. Import STATE and apply config
+    # 6. Register MCP cleanup handler
+    try:
+        from general_agent.mcp import shutdown_mcp
+        register_cleanup(shutdown_mcp)
+    except ImportError:
+        pass  # MCP module not available (harmless)
+
+    # 7. Import STATE and apply config
     from general_agent.bootstrap.state import set_config
 
     set_config(config)

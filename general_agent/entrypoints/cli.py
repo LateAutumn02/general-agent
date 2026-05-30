@@ -150,9 +150,12 @@ async def _run_cli(argv: list[str]) -> None:
     if args.print and args.prompt:
         from general_agent.agent.loop import AgentState, run_agent
         from general_agent.tools.factory import create_registry
+        from general_agent.mcp import init_mcp_servers
+        registry = create_registry()
+        await init_mcp_servers(registry, os.getcwd())
         state = AgentState(
             messages=[{"role": "user", "content": args.prompt}],
-            tool_registry=create_registry(),
+            tool_registry=registry,
             git_context=system_prompt,
             max_turns=5,
         )
@@ -166,13 +169,16 @@ async def _run_cli(argv: list[str]) -> None:
     if args.prompt:
         from general_agent.agent.loop import AgentState, run_agent
         from general_agent.tools.factory import create_registry
+        from general_agent.mcp import init_mcp_servers
         _show_banner()
         print()
         print(f"  \033[2m{args.prompt}\033[0m")
         print()
+        registry = create_registry()
+        await init_mcp_servers(registry, os.getcwd())
         state = AgentState(
             messages=[{"role": "user", "content": args.prompt}],
-            tool_registry=create_registry(),
+            tool_registry=registry,
             git_context=system_prompt,
             max_turns=5,
         )
@@ -302,6 +308,12 @@ async def _run_repl(config) -> None:
 
     from general_agent.tools.factory import create_registry
     registry = create_registry()
+
+    # ── MCP init ──
+    from general_agent.mcp import init_mcp_servers, get_server_count, get_tool_count
+    mcp_servers = await init_mcp_servers(registry, os.getcwd())
+    if mcp_servers:
+        print(f"  MCP: {mcp_servers} server(s), {get_tool_count()} tool(s)")
 
     from general_agent.agent.loop import AgentState, run_agent
     from general_agent.memory.store import MemoryStore

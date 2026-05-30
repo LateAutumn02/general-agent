@@ -187,19 +187,28 @@ MCPContentEstimation:
 
 ---
 
-## v1 简化
+## v1 实际实现
 
-general-agent v1 仅需：
+general-agent v1 已实现的数据结构（`general_agent/mcp/types.py`）：
 
 ```
-v1 MCP:
-  ConfigScope: 'user' | 'project'  # 两个作用域
-  Transport: 'stdio'               # 仅 stdio
-  McpServerConfig: McpStdioServerConfig
-  MCPServerConnection: connected | failed | pending | disabled
-  MCPTool: 基础工具映射（name + description + inputSchema + call）
+MCPServerConfig:
+  command: str                          # 可执行命令
+  args: list[str]                       # 命令参数
+  env: dict[str, str]                   # (可选) 环境变量
+
+MCPToolDef:
+  name: str                             # 工具原始名称
+  description: str                      # 工具描述（截断至 2048 字符）
+  inputSchema: dict                     # 输入参数 JSON Schema
+  readOnlyHint: bool                    # 只读提示（默认 True）
 ```
+
+运行时结构（不在 types.py 中，分布于 client/transport 模块）：
+- `MCPServerProcess` — 管理子进程生命周期，发送/接收 JSON-RPC 消息
+- `MCPServerClient` — 封装握手、工具发现、工具调用、自动重连
+- `MCPTool(Tool)` — 实现 Tool 基类的包装器，名称格式 `mcp__<server>__<tool>`
 
 ---
 
-> 最后更新: 2026-05-28 | 参考源 commit: 5a86ab0 | 参考文件: cc-haha src/services/mcp/types.ts, config.ts, client.ts
+> 最后更新: 2026-05-30 | 参考源 commit: 5a86ab0 | 参考文件: cc-haha src/services/mcp/types.ts, config.ts, client.ts
