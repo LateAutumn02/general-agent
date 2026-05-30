@@ -145,6 +145,7 @@ Tool:
 | 上下文压缩 | `compact/` | Phase 6 已完成 |
 | 沙箱安全 | `sandbox/` | Phase 8 已完成 |
 | API 集成 | `api/` | Phase 1 已完成 |
+| Bash UI | `bash-ui/` | Phase 10 已完成 |
 
 ## 设计理念
 

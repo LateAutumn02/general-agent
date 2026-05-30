@@ -51,12 +51,14 @@ async def run_agent(
     tools: list | None = None,
     on_progress: Any = None,
     on_permission: Any = None,
+    on_text: Any = None,
 ) -> tuple[str, list[dict[str, Any]]]:
     """Run the agent loop.
 
     Args:
-        on_progress: Callback(str) for progress messages.
+        on_progress:  Callback(str) for progress messages.
         on_permission: Callback(tool_name, args) -> bool for user approval.
+        on_text:      Callback(str) for incremental text streaming to terminal.
     """
     from general_agent.services.api.messages import query_model_with_streaming
 
@@ -158,6 +160,9 @@ async def run_agent(
         # 2. Call API
         tool_use_blocks: list[dict[str, Any]] = []
         assistant_text = ""
+        first_token = True
+        import time as _time
+        _t0 = _time.monotonic()
 
         try:
             async for msg in query_model_with_streaming(
@@ -168,6 +173,17 @@ async def run_agent(
                 tools=tools,
                 signal=state.abort_signal,
             ):
+                # Handle raw stream events — extract text deltas for real-time display
+                if msg.get("type") == "stream_event":
+                    chunk = msg.get("event")
+                    text = _extract_delta_text(chunk)
+                    if text:
+                        if first_token:
+                            first_token = False
+                        if on_text:
+                            on_text(text)
+                    continue
+
                 if msg.get("role") == "assistant":
                     state.messages.append(msg)
                     # Repetition detection: prevent stuck infinite loop
@@ -227,10 +243,21 @@ async def run_agent(
         tool_results = []
         for block in tool_use_blocks:
             name = block.get("name", "?")
-            args_preview = _format_args(block.get("input", {}))
+            args_input = block.get("input", {})
+            detail = _tool_detail(name, args_input)
+
+            result, tool_display = await _execute_tool(
+                block, state.tool_registry, on_permission, state,
+            )
+
+            # Show result: success/fail dot + display output
+            is_error = result.get("is_error", False)
             if on_progress:
-                on_progress(f"  \033[33m→\033[0m {name} {args_preview}")
-            result = await _execute_tool(block, state.tool_registry, on_permission, state)
+                from general_agent.ui.render import tool_call
+                on_progress(tool_call(name, detail, success=not is_error))
+                if tool_display:
+                    on_progress(tool_display)
+
             tool_results.append(result)
 
         # 5. Inject tool_results into conversation
@@ -290,6 +317,46 @@ def _is_repeating(messages: list[dict]) -> bool:
     return len(set(assistant_texts)) == 1
 
 
+def _extract_delta_text(chunk: Any) -> str:
+    """Extract text delta from a stream event chunk.
+
+    Handles both:
+      - OpenAI format:  chunk.choices[0].delta.content
+      - Anthropic format: chunk.delta.text (content_block_delta / text_delta)
+    """
+    # OpenAI / OpenAI-compatible format
+    if hasattr(chunk, "choices") and chunk.choices:
+        delta = chunk.choices[0].delta
+        if delta and delta.content:
+            return delta.content
+
+    # Anthropic / Anthropic-compatible format
+    if hasattr(chunk, "type") and hasattr(chunk, "delta"):
+        if chunk.type == "content_block_delta":
+            dt = getattr(chunk.delta, "type", "")
+            if dt == "text_delta":
+                return getattr(chunk.delta, "text", "") or ""
+
+    return ""
+
+
+def _tool_detail(name: str, args: dict[str, Any]) -> str:
+    """Build a detail string for a tool call. Shows the key parameter."""
+    if name == "Bash":
+        cmd = args.get("command", "")
+        from general_agent.tools.bash_ui import format_command_display
+        return format_command_display(cmd)
+    if name in ("Read", "Glob", "Grep"):
+        return args.get("file_path") or args.get("path") or args.get("pattern", "")
+    if name in ("Write", "Edit"):
+        return args.get("file_path", "")
+    if name == "WebFetch":
+        return args.get("url", "")[:60]
+    if name == "Agent":
+        return args.get("description", "")
+    return _format_args(args)
+
+
 def _format_args(args: dict[str, Any]) -> str:
     """Format tool arguments for display (max 80 chars)."""
     if not args:
@@ -316,8 +383,14 @@ async def _execute_tool(
     registry: ToolsRegistry,
     on_permission: Any = None,
     agent_state: Any = None,
-) -> dict[str, Any]:
-    """Execute a single tool call with permission handling."""
+) -> tuple[dict[str, Any], str]:
+    """Execute a single tool call with permission handling.
+
+    Returns:
+        (tool_result_block, display_text)
+        display_text is user-facing formatted output (e.g. colored/truncated bash output),
+        empty string if the tool doesn't provide display formatting.
+    """
 
     name = tool_use.get("name", "")
     tool_id = tool_use.get("id", "")
@@ -325,17 +398,17 @@ async def _execute_tool(
 
     tool = registry.get(name)
     if not tool:
-        return _tool_error(tool_id, f"Unknown tool: {name}")
+        return _tool_error(tool_id, f"Unknown tool: {name}"), ""
 
     # Validate input
     validation = await tool.validate_input(args)
     if validation is not None:
-        return _tool_error(tool_id, f"Validation failed: {validation.get('message', validation)}")
+        return _tool_error(tool_id, f"Validation failed: {validation.get('message', validation)}"), ""
 
     # Check permissions
     perm = await tool.check_permissions(args)
     if perm.behavior == "deny":
-        return _tool_error(tool_id, f"Permission denied: {perm.message}")
+        return _tool_error(tool_id, f"Permission denied: {perm.message}"), ""
 
     if perm.behavior == "ask":
         if agent_state and getattr(agent_state, "is_fork_agent", False):
@@ -345,15 +418,20 @@ async def _execute_tool(
         elif tool.is_read_only(args):
             pass  # Read-only: auto-allow
         else:
-            return _tool_error(tool_id, "Operation requires user confirmation but was denied")
+            return _tool_error(tool_id, "Operation requires user confirmation but was denied"), ""
 
     # Execute
     try:
         result = await tool.call(args, context=agent_state)
-        return tool.map_tool_result_to_block(result.data, tool_id)
+        block = tool.map_tool_result_to_block(result.data, tool_id)
+        # Extract user-facing display text if available
+        display = ""
+        if isinstance(result.data, dict):
+            display = result.data.get("display", "")
+        return block, display
     except Exception as e:
         logger.exception("Tool %s failed", name)
-        return _tool_error(tool_id, f"Tool error: {e}")
+        return _tool_error(tool_id, f"Tool error: {e}"), ""
 
 
 def _tool_error(tool_use_id: str, message: str) -> dict[str, Any]:

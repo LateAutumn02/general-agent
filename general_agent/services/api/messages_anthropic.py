@@ -19,7 +19,7 @@ async def query_model_anthropic(
     messages: list[dict[str, Any]],
     system_prompt: str | None = None,
     *,
-    model: str = "deepseek-v4-pro",
+    model: str = "",
     max_tokens: int = 4096,
     temperature: float | None = None,
     tools: list[dict[str, Any]] | None = None,
@@ -31,8 +31,10 @@ async def query_model_anthropic(
     """
     from anthropic import AsyncAnthropic
 
-    api_key = os.environ.get("ANTHROPIC_API_KEY", "")
-    base_url = os.environ.get("ANTHROPIC_BASE_URL", "https://api.anthropic.com")
+    api_key = os.environ.get("API_KEY", "")
+    base_url = os.environ.get("BASE_URL", "https://api.anthropic.com")
+    if not model:
+        model = os.environ.get("MODEL", "")
 
     # Build system prompt as content blocks
     system_blocks: list[dict[str, Any]] = []
@@ -64,11 +66,11 @@ async def query_model_anthropic(
 
     start = time.monotonic()
     accumulated_text = ""
-    accumulated_tool_uses: dict[str, dict[str, Any]] = {}
+    content_blocks: list[dict[str, Any]] = []
+    current_block: dict[str, Any] | None = None
     finish_reason = "end_turn"
     usage_info: dict[str, int] = {}
     ttfb_set = False
-    last_yielded: dict[str, Any] | None = None
 
     try:
         async with client.beta.messages.stream(**params) as stream:
@@ -84,17 +86,39 @@ async def query_model_anthropic(
 
                 event_type = getattr(event, "type", "")
 
-                if event_type == "content_block_delta":
+                if event_type == "content_block_start":
+                    block = getattr(event, "content_block", None)
+                    if block:
+                        bt = getattr(block, "type", "")
+                        if bt == "tool_use":
+                            current_block = {
+                                "type": "tool_use",
+                                "id": getattr(block, "id", ""),
+                                "name": getattr(block, "name", ""),
+                                "input": "",
+                            }
+                        else:
+                            current_block = None
+
+                elif event_type == "content_block_delta":
                     delta = event.delta
                     delta_type = getattr(delta, "type", "")
                     if delta_type == "text_delta":
                         accumulated_text += getattr(delta, "text", "")
-                    elif delta_type == "input_json_delta":
-                        pass  # Accumulated via tool_use blocks
+                    elif delta_type == "input_json_delta" and current_block:
+                        current_block["input"] += getattr(delta, "partial_json", "")
 
                 elif event_type == "content_block_stop":
-                    # Not used - we assemble at message_delta
-                    pass
+                    if current_block and current_block.get("type") == "tool_use":
+                        # Parse accumulated JSON input
+                        raw = current_block.get("input", "")
+                        try:
+                            import json as _json
+                            current_block["input"] = _json.loads(raw) if raw else {}
+                        except _json.JSONDecodeError:
+                            current_block["input"] = raw
+                        content_blocks.append(current_block)
+                    current_block = None
 
                 elif event_type == "message_delta":
                     delta = getattr(event, "delta", None)
@@ -122,9 +146,8 @@ async def query_model_anthropic(
         )
 
     # Assemble and yield final message
-    content_blocks: list[dict[str, Any]] = []
     if accumulated_text:
-        content_blocks.append({"type": "text", "text": accumulated_text})
+        content_blocks.insert(0, {"type": "text", "text": accumulated_text})
 
     yield {
         "role": "assistant",
@@ -133,19 +156,15 @@ async def query_model_anthropic(
         "usage": usage_info,
     }
 
-    from general_agent.bootstrap.state import add_to_total_api_duration, add_to_total_cost_usd
+    from general_agent.bootstrap.state import add_to_total_api_duration
     add_to_total_api_duration(duration_ms)
-    inp = usage_info.get("input_tokens", 0)
-    out = usage_info.get("output_tokens", 0)
-    cost = (inp / 1_000_000) * 0.27 + (out / 1_000_000) * 1.10
-    add_to_total_cost_usd(cost)
 
 
 async def query_model_without_streaming_anthropic(
     messages: list[dict[str, Any]],
     system_prompt: str | None = None,
     *,
-    model: str = "deepseek-v4-pro",
+    model: str = "",
     max_tokens: int = 4096,
     temperature: float | None = None,
     tools: list[dict[str, Any]] | None = None,

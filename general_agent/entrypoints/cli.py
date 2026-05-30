@@ -10,8 +10,11 @@ Reference: cc-haha src/entrypoints/cli.tsx
 
 from __future__ import annotations
 
+import asyncio
 import os
 import sys
+
+from general_agent.ui.render import separator
 
 # Load .env before anything else (cc-haha pattern: module-level side effects)
 _config_path = os.path.join(os.path.expanduser("~"), ".general_agent.env")
@@ -60,15 +63,15 @@ def _handle_help() -> None:
         "Options:\n"
         "  --version, -v      Show version\n"
         "  --help, -h         Show this help\n"
-        "  --model, -m MODEL  Model to use (default: deepseek-v4-pro)\n"
+        "  --model, -m MODEL  Model to use (set via config or env)\n"
         "  --print, -p        Non-interactive mode, output result and exit\n"
         "  --continue, -c     Continue the most recent session\n"
         "  --verbose          Enable debug logging\n"
         "  --permission-mode MODE  Permission mode (default|acceptEdits|bypassPermissions)\n"
         "\n"
         "Environment:\n"
-        "  DEEPSEEK_API_KEY  API key (required)\n"
-        "  GENERAL_AGENT_MODEL  Model name override\n"
+        "  API_KEY  API key (required)\n"
+        "  MODEL  Model name override\n"
     )
     sys.exit(0)
 
@@ -96,7 +99,7 @@ async def main(argv: list[str] | None = None) -> None:
 
     # --bare flag: set simple mode early (matching cc-haha pattern)
     if "--bare" in argv:
-        os.environ["GENERAL_AGENT_SIMPLE"] = "1"
+        os.environ["SIMPLE"] = "1"
 
     # Fallthrough to full CLI
     await _run_cli(argv)
@@ -112,7 +115,7 @@ async def _run_cli(argv: list[str]) -> None:
         add_help=False,  # Handled by fast path above
     )
     parser.add_argument("prompt", nargs="?", default="")
-    parser.add_argument("--model", "-m", default=os.environ.get("GENERAL_AGENT_MODEL", ""))
+    parser.add_argument("--model", "-m", default=os.environ.get("MODEL", ""))
     parser.add_argument("--print", "-p", action="store_true", default=False)
     parser.add_argument("--continue", "-c", dest="continue_session", action="store_true", default=False)
     parser.add_argument("--verbose", action="store_true", default=False)
@@ -124,9 +127,10 @@ async def _run_cli(argv: list[str]) -> None:
     # Build config from CLI args
     from general_agent.bootstrap.init import AppConfig
 
+    _api_key = os.environ.get("API_KEY", "")
     config = AppConfig(
-        api_key=os.environ.get("DEEPSEEK_API_KEY", ""),
-        model=args.model or os.environ.get("GENERAL_AGENT_MODEL", "deepseek-v4-pro"),
+        api_key=_api_key,
+        model=args.model or os.environ.get("MODEL", ""),
         verbose=args.verbose,
         permission_mode=args.permission_mode,
         print_mode=args.print,
@@ -159,8 +163,10 @@ async def _run_cli(argv: list[str]) -> None:
             git_context=system_prompt,
             max_turns=10,
         )
-        result_text, _ = await run_agent(state, on_permission=lambda n, a: True)
-        if result_text:
+        # Stream text to stdout in print mode (already shown via on_text)
+        result_text, _ = await run_agent(state, on_permission=lambda n, a: True,
+                                          on_text=lambda t: _print_chunk(t))
+        if result_text and ("Error" in result_text or "stopped" in result_text.lower()):
             _stream_text(result_text)
         print()
         return
@@ -182,10 +188,11 @@ async def _run_cli(argv: list[str]) -> None:
             git_context=system_prompt,
             max_turns=10,
         )
-        result_text, all_msgs = await run_agent(state, on_permission=lambda n, a: True)
+        result_text, all_msgs = await run_agent(state, on_permission=lambda n, a: True,
+                                                  on_text=lambda t: _print_chunk(t))
         for msg in reversed(all_msgs):
             if msg.get("role") == "assistant":
-                _print_assistant_response(msg)
+                _print_assistant_usage(msg)
                 break
         return
 
@@ -229,10 +236,10 @@ async def _first_run_setup() -> None:
         base_url = input(f"  Base URL [{default_url}]: ").strip() or default_url
         api_key = input("  API Key: ").strip()
         _save_env(
-            ANTHROPIC_API_KEY=api_key,
-            ANTHROPIC_BASE_URL=base_url,
-            GENERAL_AGENT_MODEL=model,
-            GENERAL_AGENT_PROVIDER="anthropic",
+            API_KEY=api_key,
+            BASE_URL=base_url,
+            MODEL=model,
+            PROVIDER="anthropic",
         )
     else:
         # OpenAI-compatible
@@ -240,10 +247,10 @@ async def _first_run_setup() -> None:
         base_url = input(f"  Base URL [{default_url}]: ").strip() or default_url
         api_key = input("  API Key: ").strip()
         _save_env(
-            DEEPSEEK_API_KEY=api_key,
-            DEEPSEEK_BASE_URL=base_url,
-            GENERAL_AGENT_MODEL=model,
-            GENERAL_AGENT_PROVIDER="openai",
+            API_KEY=api_key,
+            BASE_URL=base_url,
+            MODEL=model,
+            PROVIDER="openai",
         )
 
     # Reload env
@@ -354,13 +361,17 @@ async def _run_repl(config) -> None:
     )
     print()
 
+    # ── Rich REPL ──
     try:
         while True:
+            print()
+            separator()
             try:
-                user_input = input("\033[36m>\033[0m ").strip()
+                user_input = input("> ").strip()
             except (EOFError, KeyboardInterrupt):
                 print()
                 break
+            separator()
 
             if not user_input:
                 continue
@@ -369,19 +380,17 @@ async def _run_repl(config) -> None:
                 readline.write_history_file(hist_file)
 
             if user_input.startswith("/"):
-                # Built-in commands take priority over skills
                 result = await _handle_slash(user_input, state)
                 if result:
                     break
-                if result is not None:  # Handled (returned False = continue REPL)
+                if result is not None:
                     continue
-                # Fallback: check if this is a skill invocation
                 skill_name = user_input[1:].split()[0].lower()
                 if skill_name in skill_cmds:
                     skill = skill_cmds[skill_name]
                     state.messages.append({"role": "user", "content": skill.prompt})
                     state.messages.append({"role": "user", "content": f"Execute the skill: {skill.name}"})
-                    print(f"  \033[2mSkill '{skill.name}' activated.\033[0m")
+                    print(f"  [2mSkill '{skill.name}' activated.[0m")
                     result_text, all_messages = await run_agent(
                         state, on_progress=lambda msg: print(msg, flush=True))
                     for msg in reversed(all_messages):
@@ -391,38 +400,73 @@ async def _run_repl(config) -> None:
                     continue
                 continue
 
-            print()
-
-            # Append user message to shared state
             state.messages.append({"role": "user", "content": user_input})
 
+            _spinner: asyncio.Task | None = None
+            _first_text = True
+            _had_tools = False
+            _had_stream_text = False
+
+            def _on_text(chunk: str) -> None:
+                nonlocal _first_text, _spinner, _had_stream_text
+                _had_stream_text = True
+                if _first_text:
+                    _first_text = False
+                    if _spinner: _spinner.cancel()
+                    sys.stdout.write("\n")
+                    sys.stdout.flush()
+                sys.stdout.write(chunk)
+                sys.stdout.flush()
+
+            def _on_progress(msg: str) -> None:
+                nonlocal _first_text, _spinner, _had_tools
+                _had_tools = True
+                if _first_text:
+                    _first_text = False
+                    if _spinner: _spinner.cancel()
+                sys.stdout.write("\n")
+                sys.stdout.flush()
+                # msg is raw ANSI text from render.py, print directly
+                print(msg, flush=True)
+
             try:
+                import time as _t; _start = _t.monotonic()
+                _spinner = asyncio.create_task(_spin(None, "medium", _start))
+
                 result_text, all_messages = await run_agent(
                     state,
-                    on_progress=lambda msg: print(msg, flush=True),
+                    on_text=_on_text,
+                    on_progress=_on_progress,
                     on_permission=_ask_permission)
 
-                # Show final response with usage
-                if result_text and ("stopped" in result_text.lower() or "repetition" in result_text.lower()):
-                    print(f"  \033[31m⚠ {result_text}\033[0m")
-                    print("  \033[2mTip: use /compact to compress conversation, /clear to reset.\033[0m")
-                else:
-                    for msg in reversed(all_messages):
-                        if msg.get("role") == "assistant":
-                            _print_assistant_response(msg)
-                            break
+                if _spinner: _spinner.cancel()
+                elapsed = _t.monotonic() - _start
+                if not _first_text:
+                    sys.stdout.write(f"\r  \033[2mThought for {elapsed:.0f}s\033[0m\n")
+                    sys.stdout.flush()
+                    if _had_tools and not _had_stream_text:
+                        print("  \033[2mDone\033[0m", flush=True)
+
+                if result_text and "stopped" in result_text.lower():
+                    print(f"  \033[1;31m! {result_text}\033[0m", flush=True)
+
+                for msg in reversed(all_messages):
+                    if msg.get("role") == "assistant":
+                        _print_assistant_usage(msg)
+                        break
 
             except Exception as e:
-                print(f"\n  \033[31mError: {e}\033[0m\n")
-
-            print()
+                if _spinner:
+                    try: _spinner.cancel()
+                    except Exception: pass
+                print(f"\n  \033[1;31mError: {e}\033[0m\n", flush=True)
 
     finally:
-        if readline is not None:
-            try:
-                readline.write_history_file(hist_file)
-            except Exception:
-                pass
+        try:
+            if memory_store and memory_store.is_enabled():
+                memory_store.save()
+        except Exception:
+            pass
         print("\n  Goodbye.")
 
 
@@ -440,10 +484,8 @@ def _ask_permission(name: str, args: dict[str, Any]) -> bool:
 def _show_banner() -> None:
     """Display startup banner matching cc-haha pattern."""
     from general_agent.bootstrap.state import get_main_loop_model, get_session_id
-    from general_agent.constants.models import MODEL_DISPLAY_NAMES
 
-    raw_model = get_main_loop_model()
-    display_model = MODEL_DISPLAY_NAMES.get(raw_model, raw_model)
+    display_model = get_main_loop_model()
     session = get_session_id()[:8]
 
     print(f"""
@@ -648,13 +690,22 @@ async def _handle_slash(cmd: str, state=None) -> bool:
         return False
 
     if name == "/session":
-        from general_agent.bootstrap.state import get_session_id, get_total_cost_usd
+        from general_agent.bootstrap.state import get_session_id
         print(f"  Session: {get_session_id()}")
-        print(f"  Cost:    ${get_total_cost_usd():.4f}")
         return False
 
     print(f"  Unknown command: {name}. Type /help for available commands.")
     return None  # Let caller check skills
+
+
+def _print_assistant_usage(msg: dict[str, Any]) -> None:
+    """Print only token usage (text was already streamed)."""
+    usage = msg.get("usage", {})
+    if usage:
+        input_t = usage.get("input_tokens", 0)
+        output_t = usage.get("output_tokens", 0)
+        if input_t or output_t:
+            print(f"\n  \033[2mTokens: {input_t} in / {output_t} out\033[0m")
 
 
 def _print_assistant_response(msg: dict[str, Any]) -> None:
@@ -673,8 +724,13 @@ def _print_assistant_response(msg: dict[str, Any]) -> None:
         input_t = usage.get("input_tokens", 0)
         output_t = usage.get("output_tokens", 0)
         if input_t or output_t:
-            cost = (input_t / 1_000_000) * 3.0 + (output_t / 1_000_000) * 15.0
-            print(f"\n  \033[2mTokens: {input_t} in / {output_t} out  ·  ${cost:.4f}\033[0m")
+            print(f"\n  \033[2mTokens: {input_t} in / {output_t} out\033[0m")
+
+
+def _print_chunk(text: str) -> None:
+    """Print a streamed text chunk immediately without buffering."""
+    sys.stdout.write(text)
+    sys.stdout.flush()
 
 
 def _stream_text(text: str) -> None:
@@ -698,6 +754,40 @@ def _stream_text(text: str) -> None:
                 line = f"{line} {word}" if line else word
         if line:
             print(f"  {line}")
+
+
+# ── Spinner & thinking helpers ──
+
+_SPINNER = ("⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏")
+_EFFORT_STYLE = {"low": "[dim]low[/dim]", "medium": "", "high": "[bold]high[/bold]"}
+
+
+async def _spin(console, effort: str, start: float) -> None:
+    """Animated spinner — low-level write for clean single-line updates."""
+    import asyncio as _a
+    i = 0
+    label = _EFFORT_STYLE.get(effort, "medium")
+    try:
+        while True:
+            elapsed = __import__("time").monotonic() - start
+            s = _SPINNER[i % len(_SPINNER)]
+            # Use raw stdout write to avoid Rich's line buffering
+            sys.stdout.write(
+                f"\r  \033[2m{s} Thinking… ({elapsed:.0f}s · {label})\033[0m"
+            )
+            sys.stdout.flush()
+            i += 1
+            await _a.sleep(0.15)
+    except _a.CancelledError:
+        # Clear spinner line when done
+        sys.stdout.write("\r" + " " * 60 + "\r")
+        sys.stdout.flush()
+
+
+def _thinking_effort(state) -> str:
+    """Determine thinking effort from agent state or model config."""
+    # [v1] Default "medium" — could read from model config in future
+    return "medium"
 
 
 def cli_main() -> None:

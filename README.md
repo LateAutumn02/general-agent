@@ -91,6 +91,9 @@ general-agent/
 │   ├── sandbox/
 │   │   ├── flow.md           # 沙箱安全隔离
 │   │   └── data-structure.md # 沙箱设置、运行时配置
+│   ├── bash-ui/
+│   │   ├── flow.md           # Bash 工具 UI 渲染
+│   │   └── data-structure.md # 输出结构、截断常量
 │   └── api/
 │       ├── flow.md           # LLM API 集成
 │       └── data-structure.md # 请求响应、流式事件

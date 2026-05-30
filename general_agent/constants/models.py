@@ -1,37 +1,28 @@
-"""Model constants for DeepSeek API.
+"""Model and API constants — provider-agnostic.
 
-DeepSeek endpoints:
-  OpenAI-compatible:  https://api.deepseek.com
-  Anthropic-compatible: https://api.deepseek.com/anthropic
+The agent does not assume any specific provider.  All provider-specific
+configuration comes from environment variables (set by the setup wizard):
+
+  API_KEY    — API key
+  BASE_URL   — API endpoint
+  MODEL      — model name
+  PROVIDER   — "openai" or "anthropic" format
+
+Defaults below are fallbacks for when no configuration exists yet.
 """
 
-# Default model
-DEFAULT_MODEL = "deepseek-v4-pro"
+# Default model (used if MODEL is not set)
+DEFAULT_MODEL = ""
 
-# Model aliases
-MODEL_ALIASES: dict[str, str] = {
-    "pro": "deepseek-v4-pro",
-    "v4": "deepseek-v4-pro",
-    "flash": "deepseek-v4-flash",
-    "v4-flash": "deepseek-v4-flash",
-    "chat": "deepseek-chat",
-    "reasoner": "deepseek-reasoner",
-}
+# Default API endpoints (fallbacks when BASE_URL is not set)
+DEFAULT_OPENAI_BASE_URL = "https://api.deepseek.com"
+DEFAULT_ANTHROPIC_BASE_URL = "https://api.deepseek.com/anthropic"
 
-# Friendly display names (matching cc-haha renderModelName pattern)
-MODEL_DISPLAY_NAMES: dict[str, str] = {
-    "deepseek-v4-pro": "DeepSeek V4 Pro",
-    "deepseek-v4-flash": "DeepSeek V4 Flash",
-    "deepseek-chat": "DeepSeek V3 (deprecated)",
-    "deepseek-reasoner": "DeepSeek R1 (deprecated)",
-}
+# Backward-compat alias (used by client.py)
+DEEPSEEK_BASE_URL = DEFAULT_OPENAI_BASE_URL
 
-# API endpoints
-DEEPSEEK_OPENAI_BASE_URL = "https://api.deepseek.com"
-DEEPSEEK_ANTHROPIC_BASE_URL = "https://api.deepseek.com/anthropic"
-
-# Context window
-MODEL_CONTEXT_WINDOW = 1_000_000  # DeepSeek V4 Pro: 1M context
+# Context window default (most models support at least 200K)
+MODEL_CONTEXT_WINDOW = 200_000
 
 # Streaming watchdog
 STREAM_IDLE_TIMEOUT_SECONDS = 90

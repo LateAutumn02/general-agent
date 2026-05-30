@@ -104,11 +104,16 @@ class FileEditTool(Tool):
             with open(file_path, "w", encoding="utf-8") as f:
                 f.write(updated)
 
+            # Build diff display
+            display = _build_diff_display(file_path, old_string, new_string, replacements)
+            short = os.path.basename(file_path)
+
             return ToolResult(data={
                 "type": "edit",
                 "file_path": file_path,
                 "replacements": replacements,
                 "lines_changed": old_string.count("\n") + 1,
+                "display": display or f"  Edit {short}: \033[32m+{len(new_string)}\033[0m \033[31m-{len(old_string)}\033[0m",
             })
         except PermissionError:
             return ToolResult(data={
@@ -130,3 +135,38 @@ class FileEditTool(Tool):
         self, args: dict[str, Any], context: Any = None
     ) -> PermissionResult:
         return PermissionResult(behavior="ask", updated_input=args)
+
+
+# ---------------------------------------------------------------------------
+# Diff display (VS Code style)
+# ---------------------------------------------------------------------------
+
+R = "\033[0m"
+D = "\033[2m"
+RD = "\033[31m"
+GN = "\033[32m"
+BG_RD = "\033[41m"
+BG_GN = "\033[42m"
+
+
+def _build_diff_display(file_path: str, old: str, new: str, count: int) -> str:
+    """Build a VS Code-style diff rendering with colored backgrounds."""
+    short = os.path.basename(file_path)
+    lines: list[str] = []
+
+    # Header
+    lines.append(f"  {D}Edit{R} {short}: {count} replacement(s)")
+
+    # Old → New with inline diff markers
+    old_lines = old.split("\n")
+    new_lines = new.split("\n")
+
+    # Show the diff: removed lines in red bg, added in green bg
+    for line in old_lines:
+        if line.strip():
+            lines.append(f"  {BG_RD}{D}- {line}{R}")
+    for line in new_lines:
+        if line.strip():
+            lines.append(f"  {BG_GN}{D}+ {line}{R}")
+
+    return "\n".join(lines)

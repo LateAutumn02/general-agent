@@ -38,16 +38,13 @@ class AppConfig:
     @classmethod
     def from_env(cls) -> AppConfig:
         """Build config from environment variables and defaults."""
-        api_key = (
-            os.environ.get("DEEPSEEK_API_KEY", "")
-            or os.environ.get("ANTHROPIC_API_KEY", "")
-        )
+        api_key = os.environ.get("API_KEY", "")
         from general_agent.constants.models import DEFAULT_MODEL
         return cls(
             api_key=api_key,
-            model=os.environ.get("GENERAL_AGENT_MODEL", DEFAULT_MODEL),
-            verbose=bool(os.environ.get("GENERAL_AGENT_VERBOSE", "")),
-            permission_mode=os.environ.get("GENERAL_AGENT_PERMISSION_MODE", "default"),
+            model=os.environ.get("MODEL", DEFAULT_MODEL),
+            verbose=bool(os.environ.get("VERBOSE", "")),
+            permission_mode=os.environ.get("PERMISSION_MODE", "default"),
             print_mode=not os.isatty(0),
         )
 
