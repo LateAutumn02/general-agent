@@ -163,9 +163,10 @@ async def _run_cli(argv: list[str]) -> None:
             git_context=system_prompt,
             max_turns=10,
         )
-        # Stream text to stdout in print mode (already shown via on_text)
+        # Stream text to stdout in print mode
         result_text, _ = await run_agent(state, on_permission=lambda n, a: True,
-                                          on_text=lambda t: _print_chunk(t))
+                                          on_text=lambda t: _print_chunk(t),
+                                          on_progress=lambda m: print(m, flush=True))
         if result_text and ("Error" in result_text or "stopped" in result_text.lower()):
             _stream_text(result_text)
         print()
@@ -189,7 +190,8 @@ async def _run_cli(argv: list[str]) -> None:
             max_turns=10,
         )
         result_text, all_msgs = await run_agent(state, on_permission=lambda n, a: True,
-                                                  on_text=lambda t: _print_chunk(t))
+                                                  on_text=lambda t: _print_chunk(t),
+                                                  on_progress=lambda m: print(m, flush=True))
         for msg in reversed(all_msgs):
             if msg.get("role") == "assistant":
                 _print_assistant_usage(msg)

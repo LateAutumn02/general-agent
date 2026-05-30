@@ -5,11 +5,22 @@ Reference: cc-haha src/tools/GrepTool/GrepTool.ts
 
 from __future__ import annotations
 
+import locale
 import os
 import subprocess
 from typing import Any
 
 from general_agent.tools.tool import Tool, ToolResult
+
+
+def _sys_enc() -> str:
+    """System encoding: GBK on Chinese Windows, UTF-8 elsewhere."""
+    if os.name == "nt":
+        try:
+            return locale.getpreferredencoding() or "gbk"
+        except Exception:
+            return "gbk"
+    return "utf-8"
 
 
 class GrepTool(Tool):
@@ -73,7 +84,7 @@ class GrepTool(Tool):
 
         try:
             result = subprocess.run(
-                cmd, capture_output=True, text=True, encoding="utf-8", errors="replace",
+                cmd, capture_output=True, text=True, encoding=_sys_enc(), errors="replace",
                 timeout=30, cwd=os.getcwd(),
             )
             output = result.stdout.strip()
@@ -128,7 +139,7 @@ class GrepTool(Tool):
 
         try:
             result = subprocess.run(
-                cmd, capture_output=True, text=True, encoding="utf-8", errors="replace",
+                cmd, capture_output=True, text=True, encoding=_sys_enc(), errors="replace",
                 timeout=30, cwd=os.getcwd(),
             )
             output = result.stdout.strip()
@@ -167,7 +178,7 @@ class GrepTool(Tool):
 
         try:
             result = subprocess.run(
-                cmd, capture_output=True, text=True, encoding="utf-8", errors="replace",
+                cmd, capture_output=True, text=True, encoding=_sys_enc(), errors="replace",
                 timeout=30, cwd=os.getcwd(),
             )
             output = result.stdout.strip()
