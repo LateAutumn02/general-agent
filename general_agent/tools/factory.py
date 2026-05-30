@@ -9,6 +9,7 @@ from general_agent.tools.grep import GrepTool
 from general_agent.tools.glob import GlobTool
 from general_agent.tools.webfetch import WebFetchTool
 from general_agent.tools.agent_tool import AgentTool
+from general_agent.tools.tool import Tool
 
 
 def create_registry() -> ToolsRegistry:
@@ -23,3 +24,17 @@ def create_registry() -> ToolsRegistry:
     registry.register(WebFetchTool())
     registry.register(AgentTool())
     return registry
+
+
+def register_mcp_tools(registry: ToolsRegistry, mcp_tools: list[Tool]) -> None:
+    """Merge MCP tool wrappers into an existing registry.
+
+    Args:
+        registry:  Target registry to add tools to.
+        mcp_tools: List of MCPTool instances (or any Tool subclass).
+
+    Caller is responsible for creating the MCPTool instances and
+    ensuring the underlying MCP server connection is active.
+    """
+    for tool in mcp_tools:
+        registry.register(tool)

@@ -250,14 +250,25 @@ Channel 服务器也可以中继权限审批：
 
 ---
 
-## v1 简化
+## v1 实际实现
 
 general-agent v1 的 MCP 实现：
 
-1. **仅 stdio 传输** — 支持本地命令行 MCP 服务器
-2. **工具发现和执行** — 完整的 tools/list + tools/call 流程
-3. **连接管理** — 启动时连接，错误处理，清理
-4. **不做** — OAuth、channel、远程传输（sse/http/ws）、IDE 传输、Plugins
+1. **仅 stdio 传输** — 支持本地命令行 MCP 服务器，自实现轻量 JSON-RPC 客户端，不依赖外部 MCP SDK
+2. **工具发现和执行** — 完整的 initialize → notifications/initialized → tools/list → tools/call 流程
+3. **连接管理** — 启动时批量并行连接，断线自动重连一次，退出时优雅关闭
+4. **工具集成** — MCP 工具包装为 Tool 子类，命名 `mcp__<server>__<tool>`，注册到 ToolsRegistry，无缝接入现有 Agent 循环
+5. **配置** — 项目 `.mcp.json` + 用户 `~/.general_agent/mcp_settings.json`，项目覆盖用户
+6. **权限** — 默认只读，除非服务器声明 readOnlyHint=false
+7. **不做** — OAuth、channel、远程传输（sse/http/ws）、IDE 传输、Plugins、Elicitation、资源/提示词发现、list_changed 通知
+
+实现文件位于 `general_agent/mcp/`，共 6 个模块：
+- `types.py` — MCPServerConfig, MCPToolDef 数据类
+- `config.py` — 配置加载（项目 .mcp.json + 用户设置）
+- `transport.py` — JSON-RPC stdio 传输层（asyncio 子进程）
+- `client.py` — MCP 协议客户端（握手、发现、调用、重连）
+- `tool.py` — MCPTool 包装器（实现 Tool 基类）
+- `__init__.py` — 公共 API（init_mcp_servers / shutdown_mcp）
 
 ---
 
@@ -276,6 +287,6 @@ general-agent v1 的 MCP 实现：
 
 ---
 
-> 最后更新: 2026-05-28 | 参考源 commit: 5a86ab0
+> 最后更新: 2026-05-30 | 参考源 commit: 5a86ab0
 >
 > 参考源：cc-haha src/services/mcp/config.ts, client.ts, types.ts, auth.ts, src/tools/MCPTool/MCPTool.ts

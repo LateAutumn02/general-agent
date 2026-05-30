@@ -23,3 +23,6 @@ Thumbs.db
 
 # Reference
 reference/
+
+# Tests
+tests/

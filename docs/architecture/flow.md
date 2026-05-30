@@ -143,8 +143,8 @@ flowchart TD
 ✅ Phase 8 已完成:
   Sandbox (平台检测 + BashTool 集成 + /sandbox 命令 + 跳过检查)
 
-⏳ 后续待实现:
-  MCP 协议 (stdio 传输 + 基础工具)
+✅ Phase 9 已完成:
+  MCP 协议 (stdio 传输 + 工具发现 + 工具执行 + 自动重连)
 
 ❌ v1 暂不实现:
   多 Agent 编排 ──────→ 单 Agent 足够
