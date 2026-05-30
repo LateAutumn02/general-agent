@@ -20,3 +20,6 @@ Thumbs.db
 # Env
 .env
 .env.local
+
+# Reference
+reference/
