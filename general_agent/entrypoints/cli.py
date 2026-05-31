@@ -444,7 +444,9 @@ async def _run_repl(config) -> None:
                 if _spinner: _spinner.cancel()
                 elapsed = _t.monotonic() - _start
                 if not _first_text:
-                    sys.stdout.write(f"\r  \033[2mThought for {elapsed:.0f}s\033[0m\n")
+                    line = f"  \033[2mThought for {elapsed:.0f}s\033[0m"
+                    # Pad to clear any leftover spinner characters
+                    sys.stdout.write(f"\r{line.ljust(60)}\n")
                     sys.stdout.flush()
                     if _had_tools and not _had_stream_text:
                         print("  \033[2mDone\033[0m", flush=True)
@@ -515,7 +517,10 @@ async def _handle_slash(cmd: str, state=None) -> bool:
     /help           Show this help
     /model <name>   Switch model (e.g. /model sonnet)
     /clear          Clear conversation history
+    /resume         Resume a previous session
     /session        Show session info
+    /compact        Manually compact conversation context
+    /memory         Manage auto-memory (on/off/list)
   \033[2mJust type your question to start a conversation.\033[0m
 """)
         return False
@@ -696,8 +701,98 @@ async def _handle_slash(cmd: str, state=None) -> bool:
         print(f"  Session: {get_session_id()}")
         return False
 
+    if name == "/resume":
+        await _cmd_resume(state)
+        return False
+
     print(f"  Unknown command: {name}. Type /help for available commands.")
     return None  # Let caller check skills
+
+
+async def _cmd_resume(state) -> None:
+    """Resume a previous session: list recent sessions and restore one."""
+    import os as _os
+    from general_agent.session.discovery import list_sessions
+
+    cwd = _os.getcwd()
+    sessions = await list_sessions(cwd=cwd, limit=10)
+
+    if not sessions:
+        print("  \033[2mNo previous sessions found for this project.\033[0m")
+        return
+
+    print(f"\n  \033[1mRecent sessions ({cwd}):\033[0m\n")
+    for i, s in enumerate(sessions):
+        title = s.custom_title or s.first_prompt or s.summary
+        # Truncate for display
+        display = title[:70] + "…" if len(title) > 70 else title
+        ts = ""
+        if s.last_modified:
+            import datetime
+            dt = datetime.datetime.fromtimestamp(s.last_modified)
+            ts = dt.strftime("%m/%d %H:%M")
+        print(f"  \033[2m[{i+1}]\033[0m {display}")
+        tag_str = f" \033[33m#{s.tag}\033[0m" if s.tag else ""
+        branch_str = f" \033[2m@{s.git_branch}\033[0m" if s.git_branch else ""
+        size_kb = f"  {s.file_size//1024}KB" if s.file_size else ""
+        print(f"      \033[2m{ts}{tag_str}{branch_str}{size_kb}\033[0m")
+
+    print()
+    choice = input("  Pick a session (number, or Enter to cancel): ").strip()
+    if not choice or not choice.isdigit():
+        return
+
+    idx = int(choice) - 1
+    if idx < 0 or idx >= len(sessions):
+        print("  \033[31mInvalid choice.\033[0m")
+        return
+
+    selected = sessions[idx]
+
+    # Build path and load transcript
+    from general_agent.session.store import get_project_dir
+    project_dir = get_project_dir(cwd)
+    file_path = _os.path.join(project_dir, f"{selected.session_id}.jsonl")
+
+    from general_agent.session.store import get_session_store
+    store = get_session_store()
+    result = await store.load_transcript(file_path)
+
+    messages = result.get("messages", [])
+    if not messages:
+        print("  \033[31mCould not load messages from session.\033[0m")
+        return
+
+    # Extract conversation messages (strip session metadata envelope)
+    conversation: list[dict[str, Any]] = []
+    for m in messages:
+        inner = m.get("message", m)
+        # Clean up the entry for API compatibility
+        role = inner.get("role", m.get("type", ""))
+        content = inner.get("content", "")
+        entry: dict[str, Any] = {"role": role, "content": content}
+        # Preserve usage and stop_reason for assistant messages
+        if role == "assistant":
+            if "usage" in inner:
+                entry["usage"] = inner["usage"]
+            if "stop_reason" in inner:
+                entry["stop_reason"] = inner["stop_reason"]
+        conversation.append(entry)
+
+    # Switch session ID and replace messages
+    from general_agent.bootstrap.state import set_session_id
+    set_session_id(selected.session_id)
+
+    # Re-materialize the session file so subsequent writes go to the same file
+    store._session_file = file_path  # noqa: SLF001
+    store._message_uuids = set()  # noqa: SLF001 — reset dedup for resumed session
+
+    if state is not None:
+        state.messages = conversation
+
+    print(f"  \033[32mResumed session {selected.session_id[:8]} "
+          f"({len(conversation)} messages)\033[0m")
+    print(f"  \033[2mLast: {selected.summary[:60]}\033[0m")
 
 
 def _print_assistant_usage(msg: dict[str, Any]) -> None:
@@ -781,9 +876,10 @@ async def _spin(console, effort: str, start: float) -> None:
             i += 1
             await _a.sleep(0.15)
     except _a.CancelledError:
-        # Clear spinner line when done
-        sys.stdout.write("\r" + " " * 60 + "\r")
-        sys.stdout.flush()
+        # Don't clear the spinner line — _on_text already writes \n
+        # before the first text chunk. Clearing here races with that
+        # and wipes out the beginning of the streamed response.
+        pass
 
 
 def _thinking_effort(state) -> str:

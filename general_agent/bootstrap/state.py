@@ -47,6 +47,7 @@ def _get_initial_state() -> dict[str, Any]:
         # Flags
         "is_interactive": os.isatty(0),
         "verbose": False,
+        "session_persistence_disabled": False,
         # Model
         "main_loop_model": "",
         # Settings
@@ -188,6 +189,19 @@ def regenerate_session_id() -> str:
     new_id = str(uuid.uuid4())
     _state["session_id"] = new_id
     return new_id
+
+
+def set_session_id(session_id: str) -> None:
+    """Set a specific session ID (for /resume / --continue)."""
+    _state["session_id"] = session_id
+
+
+def is_session_persistence_disabled() -> bool:
+    return _state.get("session_persistence_disabled", False)
+
+
+def set_session_persistence_disabled(disabled: bool) -> None:
+    _state["session_persistence_disabled"] = disabled
 
 
 # ---------------------------------------------------------------------------

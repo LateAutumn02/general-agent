@@ -1,45 +1,52 @@
-"""Session transcript - saves full conversation to disk.
+"""Session transcript — bridges to the session persistence module.
 
-Matching cc-haha sessionTranscript pattern.
-Each message is saved as a JSON line in the session transcript file.
-Stored at ~/.general_agent/transcripts/<session-id>.jsonl
+Delegates to general_agent.session.store for actual persistence logic.
+Kept as a thin wrapper for backward compatibility.
+
+Reference: cc-haha src/services/sessionTranscript/sessionTranscript.ts
 """
 
 from __future__ import annotations
 
 import json
 import os
-from datetime import datetime, timezone
+from typing import Any
 
 
 def get_transcript_path() -> str:
     """Get path for the current session transcript."""
-    from general_agent.bootstrap.state import get_session_id
-    sid = get_session_id()
-    transcript_dir = os.path.join(os.path.expanduser("~"), ".general_agent", "transcripts")
-    os.makedirs(transcript_dir, exist_ok=True)
-    return os.path.join(transcript_dir, f"{sid}.jsonl")
+    from general_agent.session.store import get_session_store, get_transcript_path as _gtp
+    from general_agent.bootstrap.state import get_session_id, get_original_cwd
+
+    store = get_session_store()
+    if store._session_file:  # noqa: SLF001
+        return store._session_file  # noqa: SLF001
+    return _gtp(get_session_id(), get_original_cwd())
 
 
-def save_transcript(messages: list[dict]) -> None:
-    """Append messages to the session transcript (JSONL format).
+def save_transcript(messages: list[dict[str, Any]]) -> None:
+    """Append messages to the session transcript via session store.
 
-    Called after each conversation turn to preserve full history on disk.
-    The full transcript is always available even after compact truncates
-    the in-memory conversation.
+    Called after each assistant message in the agent loop.
     """
     try:
-        path = get_transcript_path()
-        timestamp = datetime.now(timezone.utc).isoformat()
-        with open(path, "a", encoding="utf-8") as f:
-            for msg in messages:
-                entry = {"timestamp": timestamp, **msg}
-                f.write(json.dumps(entry, ensure_ascii=False) + "\n")
+        from general_agent.session.store import get_session_store
+        from general_agent.bootstrap.state import get_session_id, get_original_cwd
+
+        store = get_session_store()
+        session_id = get_session_id()
+        cwd = get_original_cwd()
+
+        for msg in messages:
+            if msg.get("role") == "assistant":
+                store.save_assistant_message(msg, session_id, cwd)
+            elif msg.get("role") == "user":
+                store.save_user_message(msg, session_id, cwd)
     except Exception:
         pass  # Transcript saving is best-effort, never blocks
 
 
-def load_transcript() -> list[dict]:
+def load_transcript() -> list[dict[str, Any]]:
     """Load the current session transcript from disk."""
     try:
         path = get_transcript_path()

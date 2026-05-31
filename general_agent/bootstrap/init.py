@@ -9,6 +9,7 @@ Reference: cc-haha src/entrypoints/init.ts
 from __future__ import annotations
 
 import asyncio
+import atexit
 import dataclasses
 import logging
 import os
@@ -135,7 +136,17 @@ async def _do_init() -> None:
     except ImportError:
         pass  # MCP module not available (harmless)
 
-    # 7. Import STATE and apply config
+    # 7. Register session store cleanup (atexit — runs even on SystemExit)
+    def _flush_session_store_sync() -> None:
+        try:
+            from general_agent.session.store import get_session_store
+            store = get_session_store()
+            store.re_append_metadata()
+        except Exception:
+            pass
+    atexit.register(_flush_session_store_sync)
+
+    # 8. Import STATE and apply config
     from general_agent.bootstrap.state import set_config
 
     set_config(config)
