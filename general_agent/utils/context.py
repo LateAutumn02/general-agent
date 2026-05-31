@@ -41,6 +41,8 @@ def get_system_context(cwd: str) -> SystemContext:
                 cwd=cwd,
                 capture_output=True,
                 text=True,
+                encoding="utf-8",
+                errors="replace",
                 timeout=5,
             )
             return result.stdout.strip() if result.returncode == 0 else ""

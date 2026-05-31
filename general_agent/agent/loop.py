@@ -203,10 +203,7 @@ async def run_agent(
 
                 if msg.get("role") == "assistant":
                     state.messages.append(msg)
-                    # Repetition detection: prevent stuck infinite loop
-                    if _is_repeating(state.messages):
-                        logger.warning("Agent repetition detected - breaking loop")
-                        state.abort_signal.set()
+                    # Repetition detection disabled — too aggressive for complex tasks
                     # Save full transcript to disk (cc-haha sessionTranscript)
                     try:
                         from general_agent.bootstrap.state import get_session_id, get_original_cwd
