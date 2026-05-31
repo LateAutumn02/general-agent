@@ -116,11 +116,11 @@ async def _run_cli(argv: list[str]) -> None:
     )
     parser.add_argument("prompt", nargs="?", default="")
     parser.add_argument("--model", "-m", default=os.environ.get("MODEL", ""))
-    parser.add_argument("--print", "-p", action="store_true", default=False)
     parser.add_argument("--continue", "-c", dest="continue_session", action="store_true", default=False)
+    parser.add_argument("--resume", "-r", default=None, help="Resume a session by ID prefix")
+    parser.add_argument("--new", "-n", dest="new_session", action="store_true", default=False)
+    parser.add_argument("--max-turns", "-t", type=int, default=10)
     parser.add_argument("--verbose", action="store_true", default=False)
-    parser.add_argument("--permission-mode", default="default")
-    parser.add_argument("--bare", action="store_true", default=False)
 
     args = parser.parse_args(argv)
 
@@ -132,9 +132,9 @@ async def _run_cli(argv: list[str]) -> None:
         api_key=_api_key,
         model=args.model or os.environ.get("MODEL", ""),
         verbose=args.verbose,
-        permission_mode=args.permission_mode,
-        print_mode=args.print,
-        continue_session=args.continue_session,
+        permission_mode="default",
+        print_mode=bool(args.prompt),
+        continue_session=bool(args.continue_session),
     )
 
     # Initialize
@@ -150,58 +150,90 @@ async def _run_cli(argv: list[str]) -> None:
     system_ctx = get_system_context(os.getcwd())
     system_prompt = format_system_context(system_ctx)
 
-    # Print mode: one-shot query with tools
-    if args.print and args.prompt:
-        from general_agent.agent.loop import AgentState, run_agent
-        from general_agent.tools.factory import create_registry
-        from general_agent.mcp import init_mcp_servers
-        registry = create_registry()
-        await init_mcp_servers(registry, os.getcwd())
-        state = AgentState(
-            messages=[{"role": "user", "content": args.prompt}],
-            tool_registry=registry,
-            git_context=system_prompt,
-            max_turns=10,
-        )
-        # Stream text to stdout in print mode
-        result_text, _ = await run_agent(state, on_permission=lambda n, a: True,
-                                          on_text=lambda t: _print_chunk(t),
-                                          on_progress=lambda m: print(m, flush=True))
-        if result_text and ("Error" in result_text or "stopped" in result_text.lower()):
-            _stream_text(result_text)
-        print()
-        return
+    # ── Session resume / continue logic ──
+    is_headless = bool(args.prompt)
+    session_messages: list[dict] = []
 
-    # One-shot with positional prompt
-    if args.prompt:
+    if args.resume:
+        session_messages = await _load_session_by_id(args.resume, os.getcwd())
+        if not session_messages:
+            print(f"Session not found: {args.resume}", file=sys.stderr); sys.exit(1)
+    elif args.continue_session:
+        session_messages = await _load_latest_session(os.getcwd())
+        if not session_messages:
+            print("No previous sessions found.", file=sys.stderr); sys.exit(1)
+    if args.new_session:
+        from general_agent.bootstrap.state import regenerate_session_id as _ns
+        _ns(); session_messages = []
+
+    if not is_headless and not os.isatty(0):
+        if args.resume or args.continue_session:
+            print("Error: -c/-r without a prompt needs an interactive terminal.", file=sys.stderr)
+            sys.exit(1)
+
+    # ── Headless mode ──
+    if is_headless:
         from general_agent.agent.loop import AgentState, run_agent
         from general_agent.tools.factory import create_registry
         from general_agent.mcp import init_mcp_servers
-        _show_banner()
-        print()
-        print(f"  \033[2m{args.prompt}\033[0m")
-        print()
+        import re as _re
+
         registry = create_registry()
         await init_mcp_servers(registry, os.getcwd())
-        state = AgentState(
-            messages=[{"role": "user", "content": args.prompt}],
-            tool_registry=registry,
-            git_context=system_prompt,
-            max_turns=10,
-        )
-        result_text, all_msgs = await run_agent(state, on_permission=lambda n, a: True,
-                                                  on_text=lambda t: _print_chunk(t),
-                                                  on_progress=lambda m: print(m, flush=True))
+        messages = list(session_messages) if session_messages else []
+        messages.append({"role": "user", "content": args.prompt})
+        state = AgentState(messages=messages, tool_registry=registry,
+                           git_context=system_prompt, max_turns=args.max_turns)
+
+        def _hp(msg: str) -> None:
+            print(f"  {_re.sub(r'\033\[\d*(;\d*)?m', '', msg)}", flush=True)
+
+        result_text, all_msgs = await run_agent(
+            state, on_permission=lambda n, a: True,
+            on_text=lambda t: sys.stdout.write(t) or sys.stdout.flush(),
+            on_progress=_hp)
+
         for msg in reversed(all_msgs):
             if msg.get("role") == "assistant":
-                _print_assistant_usage(msg)
+                u = msg.get("usage", {})
+                if u: print(f"\nTokens: {u.get('input_tokens',0)} in / {u.get('output_tokens',0)} out", file=sys.stderr)
                 break
+        from general_agent.bootstrap.state import get_session_id
+        print(f"\nSession: {get_session_id()[:8]}", file=sys.stderr)
         return
 
-    # Interactive REPL - run setup if not configured, otherwise enter REPL
+    # ── Interactive mode ──
     if not config.api_key:
         await _first_run_setup()
     await _run_repl(config)
+
+
+# ── Session loading helpers ──
+
+async def _load_session_by_id(session_id: str, cwd: str) -> list[dict]:
+    from general_agent.session.discovery import list_sessions
+    from general_agent.session.store import get_project_dir, get_session_store
+    sessions = await list_sessions(cwd=cwd, limit=100)
+    for s in sessions:
+        if s.session_id.startswith(session_id):
+            path = os.path.join(get_project_dir(cwd), f"{s.session_id}.jsonl")
+            result = await get_session_store().load_transcript(path)
+            msgs = result.get("messages", [])
+            conv = []
+            for m in msgs:
+                inner = m.get("message", m)
+                conv.append({"role": inner.get("role", m.get("type","")),
+                             "content": inner.get("content","")})
+            from general_agent.bootstrap.state import set_session_id
+            set_session_id(s.session_id)
+            print(f"Resumed session: {s.session_id[:8]} ({len(conv)} msgs)", file=sys.stderr)
+            return conv
+    return []
+
+async def _load_latest_session(cwd: str) -> list[dict]:
+    from general_agent.session.discovery import list_sessions
+    sessions = await list_sessions(cwd=cwd, limit=1)
+    return await _load_session_by_id(sessions[0].session_id, cwd) if sessions else []
 
 
 # ---------------------------------------------------------------------------

@@ -84,7 +84,7 @@ class GrepTool(Tool):
 
         try:
             result = subprocess.run(
-                cmd, capture_output=True, text=True, encoding=_sys_enc(), errors="replace",
+                cmd, capture_output=True, text=True, encoding="utf-8", errors="replace",
                 timeout=30, cwd=os.getcwd(),
             )
             output = result.stdout.strip()
@@ -139,7 +139,7 @@ class GrepTool(Tool):
 
         try:
             result = subprocess.run(
-                cmd, capture_output=True, text=True, encoding=_sys_enc(), errors="replace",
+                cmd, capture_output=True, text=True, encoding="utf-8", errors="replace",
                 timeout=30, cwd=os.getcwd(),
             )
             output = result.stdout.strip()
@@ -178,7 +178,7 @@ class GrepTool(Tool):
 
         try:
             result = subprocess.run(
-                cmd, capture_output=True, text=True, encoding=_sys_enc(), errors="replace",
+                cmd, capture_output=True, text=True, encoding="utf-8", errors="replace",
                 timeout=30, cwd=os.getcwd(),
             )
             output = result.stdout.strip()
