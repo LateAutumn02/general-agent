@@ -26,3 +26,8 @@ reference/
 
 # Test caches only (test source files should be tracked)
 **/tests/__pycache__/
+
+# Project-local Claude config (per-developer, not shared)
+.claude/
+CLAUDE.md
+tests/
