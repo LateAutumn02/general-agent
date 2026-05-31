@@ -1,6 +1,6 @@
 """Session discovery — list past sessions from disk.
 
-Scans ~/.general_agent/projects/ for .jsonl files, extracts metadata
+Scans ~/.glagent/projects/ for .jsonl files, extracts metadata
 from head/tail reads (avoids full file parse for large sessions).
 
 Reference: cc-haha src/utils/listSessionsImpl.ts, sessionStoragePortable.ts

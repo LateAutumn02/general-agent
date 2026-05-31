@@ -2,7 +2,7 @@
 
 Loads MCP server definitions from:
   1.  Project-level .mcp.json (walks up from cwd, closer files win)
-  2.  User-level ~/.general_agent/mcp_settings.json
+  2.  User-level ~/.glagent/mcp_settings.json
 Project config overrides user config for same-named servers.
 
 Reference: cc-haha src/services/mcp/config.ts, docs/mcp/flow.md
@@ -21,7 +21,7 @@ from general_agent.mcp.types import MCPServerConfig
 logger = logging.getLogger("general_agent.mcp.config")
 
 # User-level MCP settings file
-_USER_MCP_FILE = os.path.join(os.path.expanduser("~"), ".general_agent", "mcp_settings.json")
+_USER_MCP_FILE = os.path.join(os.path.expanduser("~"), ".glagent", "mcp_settings.json")
 
 
 def load_user_mcp_config() -> dict[str, MCPServerConfig]:

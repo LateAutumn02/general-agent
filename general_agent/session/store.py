@@ -37,12 +37,12 @@ VERSION = "0.1.0"
 # ---------------------------------------------------------------------------
 
 def get_config_home() -> str:
-    """Return ~/.general_agent directory."""
-    return os.path.join(os.path.expanduser("~"), ".general_agent")
+    """Return ~/.glagent directory."""
+    return os.path.join(os.path.expanduser("~"), ".glagent")
 
 
 def get_projects_dir() -> str:
-    """Return ~/.general_agent/projects directory."""
+    """Return ~/.glagent/projects directory."""
     return os.path.join(get_config_home(), "projects")
 
 

@@ -1,7 +1,7 @@
 """Per-agent memory - each agent type gets its own MEMORY.md.
 
 Matching cc-haha agentMemory.ts pattern.
-Stored in .claude/agent-memory/<agent_type>/ directory.
+Stored in .glagent/agent-memory/<agent_type>/ directory.
 """
 
 from __future__ import annotations
@@ -17,11 +17,11 @@ def get_agent_memory_store(
 ) -> MemoryStore:
     """Get a MemoryStore scoped to a specific agent type.
 
-    Directory: <.claude/agent-memory/<agent_type>/
+    Directory: <.glagent/agent-memory/<agent_type>/
     Each agent type has independent memories.
     """
     root = project_root or os.getcwd()
-    return MemoryStore(root=os.path.join(root, ".claude", "agent-memory", agent_type))
+    return MemoryStore(root=os.path.join(root, ".glagent", "agent-memory", agent_type))
 
 
 def inject_agent_memory(

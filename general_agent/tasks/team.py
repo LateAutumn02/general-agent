@@ -24,7 +24,7 @@ class TeamManager:
     def __init__(self, team_name: str = "default", project_root: str | None = None):
         self.team_name = team_name
         self.root = project_root or os.getcwd()
-        self.team_dir = os.path.join(self.root, ".claude", "team", team_name)
+        self.team_dir = os.path.join(self.root, ".glagent", "team", team_name)
 
     def ensure_dir(self) -> None:
         os.makedirs(self.team_dir, exist_ok=True)

@@ -1,4 +1,4 @@
-"""Agent definitions - load from .claude/agents/ directory.
+"""Agent definitions - load from .glagent/agents/ directory.
 
 Matching cc-haha src/tools/AgentTool/loadAgentsDir.ts pattern.
 """
@@ -90,8 +90,8 @@ BUILTIN_AGENTS = [
 
 
 def load_project_agents(root: str) -> dict[str, AgentDefinition]:
-    """Scan .claude/agents/ directory for custom agent definitions."""
-    agents_dir = os.path.join(root, ".claude", "agents")
+    """Scan .glagent/agents/ directory for custom agent definitions."""
+    agents_dir = os.path.join(root, ".glagent", "agents")
     if not os.path.isdir(agents_dir):
         return {}
 

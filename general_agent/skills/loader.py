@@ -1,4 +1,4 @@
-"""Skills loader - scans .claude/skills/ for SKILL.md files.
+"""Skills loader - scans .glagent/skills/ for SKILL.md files.
 
 Matching cc-haha src/skills/loadSkillsDir.ts pattern.
 v1: static loading only, inline mode, project-level only.
@@ -26,7 +26,7 @@ class SkillDef:
 
 
 def scan_skills(root: str) -> list[SkillDef]:
-    """Scan project .claude/skills/ directory for skill definitions.
+    """Scan project .glagent/skills/ directory for skill definitions.
 
     Each skill is a subdirectory containing a SKILL.md file.
     Directory name = skill name.
@@ -34,7 +34,7 @@ def scan_skills(root: str) -> list[SkillDef]:
     Returns:
         List of SkillDef objects, sorted by name.
     """
-    skills_dir = os.path.join(root, ".claude", "skills")
+    skills_dir = os.path.join(root, ".glagent", "skills")
     if not os.path.isdir(skills_dir):
         return []
 

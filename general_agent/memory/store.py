@@ -22,7 +22,7 @@ MEMORY_TYPES = ("user", "feedback", "project", "reference")
 # Prompt sections matching cc-haha memoryTypes.ts
 BEHAVIOR_INSTRUCTIONS = """## Memory Instructions
 
-You have access to a persistent memory system in `.claude/memory/`.
+You have access to a persistent memory system in `.glagent/memory/`.
 
 ### When to ACCESS memories
 - At the start of a conversation or when the user mentions something that may have been discussed before
@@ -64,10 +64,10 @@ type: <user|feedback|project|reference>
 
 
 class MemoryStore:
-    """Manages .claude/memory/ directory with YAML frontmatter + MEMORY.md index."""
+    """Manages .glagent/memory/ directory with YAML frontmatter + MEMORY.md index."""
 
     def __init__(self, root: str | None = None):
-        self.root = root or os.path.join(os.getcwd(), ".claude", "memory")
+        self.root = root or os.path.join(os.getcwd(), ".glagent", "memory")
 
     # --- Path helpers ---
 
@@ -322,7 +322,7 @@ class MemoryStore:
 
 The conversation above may contain information worth remembering. You MUST check.
 
-Step 1: Read existing memory files first (they're in .claude/memory/).
+Step 1: Read existing memory files first (they're in .glagent/memory/).
 Step 2: Then decide if any NEW information should be saved.
 Step 3: Use the Write tool to save new memories. Use the Edit tool to update existing ones.
 Step 4: Write a 1-line summary of what you saved, or "Checked, memories are up to date."

@@ -17,7 +17,7 @@ import sys
 from general_agent.ui.render import separator
 
 # Load .env before anything else (cc-haha pattern: module-level side effects)
-_config_path = os.path.join(os.path.expanduser("~"), ".general_agent.env")
+_config_path = os.path.join(os.path.expanduser("~"), ".glagent.env")
 try:
     from dotenv import load_dotenv
     load_dotenv(_config_path)
@@ -298,7 +298,7 @@ async def _run_repl(config) -> None:
     Uses readline on Unix, plain input() on Windows.
     """
     # Enable line editing and history (Unix readline, Windows skip)
-    hist_file = os.path.join(os.path.expanduser("~"), ".general_agent_history")
+    hist_file = os.path.join(os.path.expanduser("~"), ".glagent_history")
     try:
         import readline
         try:
@@ -575,7 +575,7 @@ async def _handle_slash(cmd: str, state=None) -> bool:
 
   To save memories: just ask the agent directly,
   e.g. \"remember that I prefer TypeScript over JavaScript\".
-  The agent will write to .claude/memory/.
+  The agent will write to .glagent/memory/.
 """)
         return False
 

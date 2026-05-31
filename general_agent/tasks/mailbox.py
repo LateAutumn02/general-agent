@@ -1,7 +1,7 @@
 """Inter-agent messaging via file-based mailbox.
 
 Matching cc-haha teammateMailbox pattern.
-Each agent has an inbox file in the project's .claude/team/ directory.
+Each agent has an inbox file in the project's .glagent/team/ directory.
 """
 
 from __future__ import annotations
@@ -27,7 +27,7 @@ class Mailbox:
         self.agent_name = agent_name
         self.team_name = team_name
         self.root = project_root or os.getcwd()
-        self.inbox_dir = os.path.join(self.root, ".claude", "team", team_name, "inboxes")
+        self.inbox_dir = os.path.join(self.root, ".glagent", "team", team_name, "inboxes")
 
     def _inbox_path(self) -> str:
         return os.path.join(self.inbox_dir, f"{self.agent_name}.json")
