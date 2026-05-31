@@ -295,18 +295,74 @@ async def _run_repl(config) -> None:
     """Interactive REPL with streaming responses.
 
     Displays banner, then loops: prompt -> API call -> display result.
-    Uses readline on Unix, plain input() on Windows.
+    Uses prompt_toolkit for cross-platform input with tab completion.
     """
-    # Enable line editing and history (Unix readline, Windows skip)
+    from prompt_toolkit import PromptSession
+    from prompt_toolkit.completion import Completer, Completion
+    from prompt_toolkit.history import FileHistory
+
+    # ── Slash command definitions (for tab completion) ──
+    _BUILTIN_COMMANDS: dict[str, list[str]] = {
+        "/exit": [], "/quit": [], "/q": [],
+        "/help": [],
+        "/model": [],
+        "/clear": [],
+        "/resume": [],
+        "/session": [],
+        "/compact": [],
+        "/autocompact": [],
+        "/snip": [],
+        "/context": [],
+        "/memory": ["on", "off", "enable", "disable", "aggressive", "every",
+                    "throttle", "throttled", "list", "ls", "show", "refresh", "reload"],
+        "/sandbox": ["on", "off", "enable", "disable", "exclude", "add"],
+        "/coordinator": ["on", "off", "enable", "disable"],
+    }
+
+    def _get_all_commands() -> dict[str, list[str]]:
+        """Merge built-in commands with loaded skill commands."""
+        cmds = dict(_BUILTIN_COMMANDS)
+        for name in skill_cmds:
+            cmds[f"/{name}"] = []
+        return cmds
+
+    class _SlashCompleter(Completer):
+        """Tab completion for slash commands using prompt_toolkit."""
+
+        def get_completions(self, document, complete_event):
+            text = document.text_before_cursor.lstrip()
+            # Only complete lines starting with /
+            if not text.startswith("/"):
+                return
+
+            all_cmds = _get_all_commands()
+            tokens = text.split()
+
+            if len(tokens) == 0 or (len(tokens) == 1 and not text.endswith(" ")):
+                # Completing command name
+                prefix = tokens[0] if tokens else ""
+                for cmd in sorted(all_cmds):
+                    if cmd.startswith(prefix):
+                        yield Completion(cmd, start_position=-len(prefix))
+
+            elif len(tokens) >= 1:
+                # Completing sub-command
+                cmd = tokens[0]
+                sub_cmds = all_cmds.get(cmd, [])
+                if sub_cmds:
+                    prefix = tokens[-1] if not text.endswith(" ") else ""
+                    for sub in sorted(sub_cmds):
+                        if sub.startswith(prefix):
+                            yield Completion(sub, start_position=-len(prefix))
+
+    # History file
     hist_file = os.path.join(os.path.expanduser("~"), ".glagent_history")
-    try:
-        import readline
-        try:
-            readline.read_history_file(hist_file)
-        except FileNotFoundError:
-            pass
-    except (ImportError, ModuleNotFoundError):
-        readline = None  # type: ignore[assignment]
+
+    session = PromptSession(
+        history=FileHistory(hist_file),
+        completer=_SlashCompleter(),
+        message="> ",
+    )
 
     _show_banner()
 
@@ -348,6 +404,7 @@ async def _run_repl(config) -> None:
     if skills:
         print(f"  Loaded {len(skills)} skill(s): {', '.join(s.name for s in skills)}")
 
+
     prompt_extra = memory_text
     if skills_text:
         prompt_extra += "\n" + skills_text
@@ -369,17 +426,15 @@ async def _run_repl(config) -> None:
             print()
             separator()
             try:
-                user_input = input("> ").strip()
+                user_input = await session.prompt_async()
             except (EOFError, KeyboardInterrupt):
                 print()
                 break
             separator()
 
+            user_input = user_input.strip()
             if not user_input:
                 continue
-
-            if readline is not None:
-                readline.write_history_file(hist_file)
 
             if user_input.startswith("/"):
                 result = await _handle_slash(user_input, state)
