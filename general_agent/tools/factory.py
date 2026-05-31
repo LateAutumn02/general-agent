@@ -9,6 +9,7 @@ from general_agent.tools.grep import GrepTool
 from general_agent.tools.glob import GlobTool
 from general_agent.tools.webfetch import WebFetchTool
 from general_agent.tools.agent_tool import AgentTool
+from general_agent.tools.swarm_tool import SwarmTool
 from general_agent.tools.tool import Tool
 
 
@@ -23,6 +24,7 @@ def create_registry() -> ToolsRegistry:
     registry.register(GlobTool())
     registry.register(WebFetchTool())
     registry.register(AgentTool())
+    registry.register(SwarmTool())
     return registry
 
 

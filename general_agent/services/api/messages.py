@@ -370,6 +370,26 @@ def _usage_dict_raw(usage: dict[str, int] | None) -> dict[str, Any]:
     return {"input_tokens": usage.get("input_tokens", 0), "output_tokens": usage.get("output_tokens", 0)}
 
 
+async def query_model_simple(prompt: str, *, model: str = "", max_tokens: int = 500) -> str:
+    """Lightweight non-streaming query for internal use (judge, delegation, etc).
+
+    Returns the text content of the first assistant message.
+    """
+    messages = [{"role": "user", "content": prompt}]
+    result = await query_model_without_streaming(
+        messages=messages,
+        model=model,
+        max_tokens=max_tokens,
+        temperature=0.3,  # low temp for classification tasks
+    )
+    content = result.get("content", [])
+    if isinstance(content, list):
+        for block in content:
+            if block.get("type") == "text":
+                return block.get("text", "")
+    return str(content)
+
+
 def _log_usage(model: str, usage: dict[str, int], duration_ms: int, ttfb_ms: float) -> None:
     inp = usage.get("input_tokens", 0)
     out = usage.get("output_tokens", 0)
