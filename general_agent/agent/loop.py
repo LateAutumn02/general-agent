@@ -67,6 +67,23 @@ async def run_agent(
 
     assistant_text = ""
     state.turn_count = 0  # Reset per run_agent() call
+
+    # Save the latest user message and remember its UUID for chaining
+    _last_user_uuid: str | None = None
+    try:
+        from general_agent.bootstrap.state import get_session_id, get_original_cwd
+        from general_agent.session.store import get_session_store
+        _store = get_session_store()
+        _sid = get_session_id()
+        _cwd = get_original_cwd()
+        # Find the last user message added before this run
+        user_msgs = [m for m in state.messages if m.get("role") == "user"]
+        if user_msgs:
+            _last_user_uuid = _store.save_user_message(
+                user_msgs[-1], session_id=_sid, cwd=_cwd,
+            )
+    except Exception:
+        pass
     state._memory_turns_since += 1
     while state.turn_count < state.max_turns:
         if state.abort_signal.is_set():
@@ -192,8 +209,15 @@ async def run_agent(
                         state.abort_signal.set()
                     # Save full transcript to disk (cc-haha sessionTranscript)
                     try:
-                        from general_agent.compact.transcript import save_transcript
-                        save_transcript([msg])
+                        from general_agent.bootstrap.state import get_session_id, get_original_cwd
+                        from general_agent.session.store import get_session_store
+                        _asst_store = get_session_store()
+                        _asst_store.save_assistant_message(
+                            msg,
+                            session_id=get_session_id(),
+                            cwd=get_original_cwd(),
+                            parent_uuid=_last_user_uuid,
+                        )
                     except Exception:
                         pass
                     content = msg.get("content", [])
