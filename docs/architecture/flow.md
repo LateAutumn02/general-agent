@@ -147,8 +147,8 @@ flowchart TD
   MCP 协议 (stdio 传输 + 工具发现 + 工具执行 + 自动重连)
 
 ✅ Phase 10 已完成:
-  Bash UI (流式逐字输出 + 动态 thinking spinner + 工具调用展示
-  + 输出截断折叠 + ANSI 彩色面板 + Rich 分隔线 + 统一 API 配置)
+  Bash UI v2 — Textual TUI 重构 (三区布局 + Rich Panel 渲染
+  + 流式文本节流 + CSS 主题 + 线程安全 Bridge)
 
 ❌ v1 暂不实现:
   多 Agent 编排 ──────→ 单 Agent 足够
@@ -159,4 +159,4 @@ flowchart TD
 
 ---
 
-> 最后更新: 2026-05-30 | 参考源 commit: 5a86ab0
+> 最后更新: 2026-06-01 | 参考: TunaCode ui/, Textual 4.x

@@ -1,0 +1,77 @@
+/* ===================================================================
+   layout.tcss — general-agent Textual UI layout
+
+   Three-zone layout:
+      StatusBar    (height 1, docked top)
+      Chat / streaming area (1fr, inside viewport container)
+      PromptInput  (height 3, docked bottom)
+   ================================================================== */
+
+Screen {
+    scrollbar-color: $scrollbar;
+    scrollbar-background: $surface;
+}
+
+/* -- StatusBar -------------------------------------------------- */
+StatusBar {
+    width: 100%;
+    height: 1;
+    background: $background;
+    padding: 0 1;
+}
+
+/* -- Viewport (main content area) ------------------------------- */
+#viewport {
+    height: 1fr;
+    background: $surface;
+}
+
+/* -- ChatContainer ---------------------------------------------- */
+ChatContainer {
+    height: 1fr;
+    padding: 0 0;
+    scrollbar-gutter: stable;
+}
+
+/* -- Loading indicator ------------------------------------------ */
+LoadingIndicator {
+    height: 1;
+    display: none;
+}
+LoadingIndicator.active {
+    display: block;
+}
+
+/* -- Streaming output ------------------------------------------- */
+#streaming-output {
+    height: auto;
+    max-height: 50%;
+    display: none;
+    background: $surface;
+    padding: 0 1;
+    overflow-y: auto;
+    scrollbar-gutter: stable;
+}
+#streaming-output.active {
+    display: block;
+}
+
+/* -- PromptInput ------------------------------------------------ */
+PromptInput {
+    dock: bottom;
+    height: 3;
+    background: $background;
+    border-top: solid $border;
+    border-left: solid $border;
+    border-bottom: solid $border;
+    border-right: solid $border;
+    padding: 0 1;
+}
+
+PromptInput:focus-within {
+    border-left: solid $primary;
+}
+
+PromptInput.bash-mode {
+    outline: solid $success;
+}

@@ -185,8 +185,20 @@ async def _run_cli(argv: list[str]) -> None:
         state = AgentState(messages=messages, tool_registry=registry,
                            git_context=system_prompt, max_turns=args.max_turns)
 
-        def _hp(msg: str) -> None:
-            print(f"  {_re.sub(r'\033\[\d*(;\d*)?m', '', msg)}", flush=True)
+        def _hp(msg) -> None:
+            if isinstance(msg, str):
+                text = _re.sub(r'\033\[\d*(;\d*)?m', '', msg)
+            elif hasattr(msg, 'plain'):
+                text = msg.plain
+            else:
+                # Rich Panel / Table / Syntax etc. → plain text
+                from rich.console import Console as _RC
+                c = _RC(no_color=True, force_terminal=False)
+                with c.capture() as cap:
+                    c.print(msg)
+                text = cap.get().rstrip()
+            for line in text.splitlines():
+                print(f"  {line}", flush=True)
 
         result_text, all_msgs = await run_agent(
             state, on_permission=lambda n, a: True,
@@ -324,80 +336,12 @@ def _save_env(**kwargs: str) -> None:
 
 
 async def _run_repl(config) -> None:
-    """Interactive REPL with streaming responses.
+    """Launch the Textual TUI for interactive use.
 
-    Displays banner, then loops: prompt -> API call -> display result.
-    Uses prompt_toolkit for cross-platform input with tab completion.
+    All setup (tools, memory, skills, MCP, AgentState) is performed here
+    and passed to the TextualAgentApp, which owns the event loop from that
+    point forward.
     """
-    from prompt_toolkit import PromptSession
-    from prompt_toolkit.completion import Completer, Completion
-    from prompt_toolkit.history import FileHistory
-
-    # ── Slash command definitions (for tab completion) ──
-    _BUILTIN_COMMANDS: dict[str, list[str]] = {
-        "/exit": [], "/quit": [], "/q": [],
-        "/help": [],
-        "/model": [],
-        "/clear": [],
-        "/resume": [],
-        "/session": [],
-        "/compact": [],
-        "/autocompact": [],
-        "/snip": [],
-        "/context": [],
-        "/memory": ["on", "off", "enable", "disable", "aggressive", "every",
-                    "throttle", "throttled", "list", "ls", "show", "refresh", "reload"],
-        "/sandbox": ["on", "off", "enable", "disable", "exclude", "add"],
-        "/coordinator": ["on", "off", "enable", "disable"],
-    }
-
-    def _get_all_commands() -> dict[str, list[str]]:
-        """Merge built-in commands with loaded skill commands."""
-        cmds = dict(_BUILTIN_COMMANDS)
-        for name in skill_cmds:
-            cmds[f"/{name}"] = []
-        return cmds
-
-    class _SlashCompleter(Completer):
-        """Tab completion for slash commands using prompt_toolkit."""
-
-        def get_completions(self, document, complete_event):
-            text = document.text_before_cursor.lstrip()
-            # Only complete lines starting with /
-            if not text.startswith("/"):
-                return
-
-            all_cmds = _get_all_commands()
-            tokens = text.split()
-
-            if len(tokens) == 0 or (len(tokens) == 1 and not text.endswith(" ")):
-                # Completing command name
-                prefix = tokens[0] if tokens else ""
-                for cmd in sorted(all_cmds):
-                    if cmd.startswith(prefix):
-                        yield Completion(cmd, start_position=-len(prefix))
-
-            elif len(tokens) >= 1:
-                # Completing sub-command
-                cmd = tokens[0]
-                sub_cmds = all_cmds.get(cmd, [])
-                if sub_cmds:
-                    prefix = tokens[-1] if not text.endswith(" ") else ""
-                    for sub in sorted(sub_cmds):
-                        if sub.startswith(prefix):
-                            yield Completion(sub, start_position=-len(prefix))
-
-    # History file
-    hist_file = os.path.join(os.path.expanduser("~"), ".glagent_history")
-
-    session = PromptSession(
-        history=FileHistory(hist_file),
-        completer=_SlashCompleter(),
-        message="> ",
-    )
-
-    _show_banner()
-
     # Gather system context and register tools
     from general_agent.utils.context import get_system_context, format_system_context
     system_ctx = get_system_context(os.getcwd())
@@ -407,25 +351,16 @@ async def _run_repl(config) -> None:
     registry = create_registry()
 
     # ── MCP init ──
-    from general_agent.mcp import init_mcp_servers, get_server_count, get_tool_count
-    mcp_servers = await init_mcp_servers(registry, os.getcwd())
-    if mcp_servers:
-        print(f"  MCP: {mcp_servers} server(s), {get_tool_count()} tool(s)")
+    from general_agent.mcp import init_mcp_servers
+    await init_mcp_servers(registry, os.getcwd())
 
-    from general_agent.agent.loop import AgentState, run_agent
+    from general_agent.agent.loop import AgentState
     from general_agent.memory.store import MemoryStore
 
     # Load memories + check AutoDream
     memory_store = MemoryStore()
     memory_text = memory_store.format_for_prompt()
-
-    # AutoDream: consolidate stale memories at startup
     if memory_store.should_dream():
-        print("  \033[2mMemory consolidation needed...\033[0m")
-        dream_prompt = memory_store.build_dream_prompt()
-        # Will be injected as first "user message" so agent handles it
-        # In REPL, this shows at first prompt. In one-shot, it runs automatically.
-        # For now, just touch lock and skip (no fork agent to run it automatically)
         memory_store.touch_dream_lock()
 
     # Load skills
@@ -433,15 +368,12 @@ async def _run_repl(config) -> None:
     skills = scan_skills(os.getcwd())
     skills_text = format_skills_for_prompt(skills)
     skill_cmds = get_slash_commands(skills)
-    if skills:
-        print(f"  Loaded {len(skills)} skill(s): {', '.join(s.name for s in skills)}")
-
 
     prompt_extra = memory_text
     if skills_text:
         prompt_extra += "\n" + skills_text
 
-    # Shared AgentState across turns (cc-haha: preserves conversation)
+    # Shared AgentState across turns
     state = AgentState(
         tool_registry=registry,
         git_context=git_context,
@@ -450,115 +382,19 @@ async def _run_repl(config) -> None:
         auto_memory=memory_store.is_enabled(),
         max_turns=10,
     )
-    print()
 
-    # ── Rich REPL ──
-    try:
-        while True:
-            print()
-            separator()
-            try:
-                user_input = await session.prompt_async()
-            except (EOFError, KeyboardInterrupt):
-                print()
-                break
-            separator()
-
-            user_input = user_input.strip()
-            if not user_input:
-                continue
-
-            if user_input.startswith("/"):
-                result = await _handle_slash(user_input, state)
-                if result:
-                    break
-                if result is not None:
-                    continue
-                skill_name = user_input[1:].split()[0].lower()
-                if skill_name in skill_cmds:
-                    skill = skill_cmds[skill_name]
-                    state.messages.append({"role": "user", "content": skill.prompt})
-                    state.messages.append({"role": "user", "content": f"Execute the skill: {skill.name}"})
-                    print(f"  [2mSkill '{skill.name}' activated.[0m")
-                    result_text, all_messages = await run_agent(
-                        state, on_progress=lambda msg: print(msg, flush=True))
-                    for msg in reversed(all_messages):
-                        if msg.get("role") == "assistant":
-                            _print_assistant_response(msg)
-                            break
-                    continue
-                continue
-
-            state.messages.append({"role": "user", "content": user_input})
-
-            _spinner: asyncio.Task | None = None
-            _first_text = True
-            _had_tools = False
-            _had_stream_text = False
-
-            def _on_text(chunk: str) -> None:
-                nonlocal _first_text, _spinner, _had_stream_text
-                _had_stream_text = True
-                if _first_text:
-                    _first_text = False
-                    if _spinner: _spinner.cancel()
-                    sys.stdout.write("\n")
-                    sys.stdout.flush()
-                sys.stdout.write(chunk)
-                sys.stdout.flush()
-
-            def _on_progress(msg: str) -> None:
-                nonlocal _first_text, _spinner, _had_tools
-                _had_tools = True
-                if _first_text:
-                    _first_text = False
-                    if _spinner: _spinner.cancel()
-                sys.stdout.write("\n")
-                sys.stdout.flush()
-                # msg is raw ANSI text from render.py, print directly
-                print(msg, flush=True)
-
-            try:
-                import time as _t; _start = _t.monotonic()
-                _spinner = asyncio.create_task(_spin(None, "medium", _start))
-
-                result_text, all_messages = await run_agent(
-                    state,
-                    on_text=_on_text,
-                    on_progress=_on_progress,
-                    on_permission=_ask_permission)
-
-                if _spinner: _spinner.cancel()
-                elapsed = _t.monotonic() - _start
-                if not _first_text:
-                    line = f"  \033[2mThought for {elapsed:.0f}s\033[0m"
-                    # Pad to clear any leftover spinner characters
-                    sys.stdout.write(f"\r{line.ljust(60)}\n")
-                    sys.stdout.flush()
-                    if _had_tools and not _had_stream_text:
-                        print("  \033[2mDone\033[0m", flush=True)
-
-                if result_text and "stopped" in result_text.lower():
-                    print(f"  \033[1;31m! {result_text}\033[0m", flush=True)
-
-                for msg in reversed(all_messages):
-                    if msg.get("role") == "assistant":
-                        _print_assistant_usage(msg)
-                        break
-
-            except Exception as e:
-                if _spinner:
-                    try: _spinner.cancel()
-                    except Exception: pass
-                print(f"\n  \033[1;31mError: {e}\033[0m\n", flush=True)
-
-    finally:
-        try:
-            if memory_store and memory_store.is_enabled():
-                memory_store.save()
-        except Exception:
-            pass
-        print("\n  Goodbye.")
+    # Launch Textual app
+    from general_agent.ui.app import TextualAgentApp
+    app = TextualAgentApp(
+        state=state,
+        registry=registry,
+        git_context=git_context,
+        memory_store=memory_store,
+        skills=skills,
+        skill_cmds=skill_cmds,
+    )
+    await app.run_async()
+    print("\n  Goodbye.")
 
 
 def _ask_permission(name: str, args: dict[str, Any]) -> bool:

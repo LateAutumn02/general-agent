@@ -209,9 +209,10 @@ class BashTool(Tool):
 
         return "\n".join(parts)
 
-    def _format_for_display(self, out: BashOut) -> str:
-        """Build Rich markup for a bash output panel."""
-        return _rich_bash_panel(out)
+    def _format_for_display(self, out: BashOut):
+        """Build a Rich Panel for the bash output display."""
+        from general_agent.tools.bash_ui import render_bash_panel
+        return render_bash_panel(out)
 
     def map_tool_result_to_block(
         self, output: Any, tool_use_id: str
@@ -254,99 +255,6 @@ class BashTool(Tool):
         if self.is_read_only(args):
             return PermissionResult(behavior="allow", updated_input=args)
         return PermissionResult(behavior="ask", updated_input=args)
-
-
-def _rich_bash_panel(out: BashOut) -> str:
-    """Build a clean ANSI block for bash output with borders.
-
-    Uses simple ANSI escapes so it composes with streaming text output.
-    """
-    R = "\033[0m"
-    D = "\033[2m"
-    RD = "\033[31m"
-    GN = "\033[32m"
-    YL = "\033[33m"
-
-    lines: list[str] = []
-    w = 60  # Panel width
-
-    # Decide border color
-    if out.interrupted or out.timed_out or out.exit_code != 0:
-        bc = RD
-    else:
-        bc = GN
-
-    # Top border
-    lines.append(f"  {bc}┌{'─' * w}{R}")
-
-    # stdout (max 5 lines, truncate long lines)
-    if out.stdout:
-        out_lines = out.stdout.split("\n")
-        for i, sl in enumerate(out_lines):
-            if i >= 5:
-                lines.append(f"  {bc}│{R} {D}… +{len(out_lines) - 5} lines{R}")
-                break
-            if len(sl) > w - 2:
-                sl = sl[:w - 4] + "…"
-            lines.append(f"  {bc}│{R} {sl}")
-
-    # stderr (max 3 lines)
-    if out.stderr:
-        if out.stdout:
-            lines.append(f"  {bc}├{D} stderr {'─' * (w - 9)}{R}")
-        err_lines = out.stderr.split("\n")
-        for i, sl in enumerate(err_lines):
-            if i >= 3:
-                lines.append(f"  {bc}│{R} {RD}… +{len(err_lines) - 3} lines{R}")
-                break
-            if len(sl) > w - 2:
-                sl = sl[:w - 4] + "…"
-            lines.append(f"  {bc}│{R} {RD}{sl}{R}")
-
-    # Empty output
-    if not out.stdout and not out.stderr:
-        if out.is_silent:
-            lines.append(f"  {bc}│{R} {D}Done{R}")
-        else:
-            lines.append(f"  {bc}│{R} {D}(no output){R}")
-
-    # Bottom: status
-    status = _panel_status(out)
-    lines.append(f"  {bc}└─{R} {status}")
-
-    return "\n".join(lines)
-
-
-def _panel_status(out: BashOut) -> str:
-    """Build the bottom status line for a bash panel."""
-    D = "\033[2m"
-    R = "\033[0m"
-    RD = "\033[31m"
-    YL = "\033[33m"
-    GN = "\033[32m"
-    parts = []
-
-    if out.interrupted:
-        parts.append(f"{YL}Interrupted{R}")
-    elif out.timed_out:
-        parts.append(f"{RD}Timed out{R}")
-    elif out.exit_code != 0:
-        parts.append(f"{RD}exit {out.exit_code}{R}")
-    elif out.is_silent:
-        parts.append(f"{GN}Done{R}")
-    else:
-        parts.append(f"{GN}ok{R}")
-
-    if out.duration_ms > 0:
-        ms = out.duration_ms
-        if ms < 1000:
-            parts.append(f"{D}{ms}ms{R}")
-        elif ms < 60000:
-            parts.append(f"{D}{ms/1000:.1f}s{R}")
-        else:
-            parts.append(f"{D}{ms//60000}m {(ms%60000)//1000}s{R}")
-
-    return f" {D}·{R} ".join(parts)
 
 
 def _wrap_sandbox(command: str) -> str:

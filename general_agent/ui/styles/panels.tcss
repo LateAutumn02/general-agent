@@ -1,0 +1,77 @@
+/* ===================================================================
+   panels.tcss — Message / tool / error panel styles
+
+   CSS-class driven.  Renderers attach classes via PanelMeta;
+   the classes below supply visual appearance without Rich Panel()
+   wrappers, keeping Rich text selectable.
+   ================================================================== */
+
+/* -- Base chat message ------------------------------------------ */
+.chat-message {
+    width: 1fr;
+}
+
+/* -- User message block ----------------------------------------- */
+.user-message {
+    margin: 0 0 1 0;
+    padding: 0 0 0 1;
+    background: $background;
+    border-top: solid $background;
+    border-right: solid $background;
+    border-bottom: solid $background;
+    border-left: solid $primary;
+}
+
+/* -- Expand variant --------------------------------------------- */
+.expand {
+    width: 1fr;
+}
+
+/* -- Shared panel base ------------------------------------------ */
+.agent-response,
+.info-message,
+.tool-panel,
+.error-panel,
+.system-notice {
+    background: $surface;
+    padding: 0 1;
+    margin: 0 0 1 0;
+    border-top: solid $border;
+    border-left: solid $border;
+    border-bottom: solid $border;
+    border-right: solid $border;
+}
+
+/* -- Agent response --------------------------------------------- */
+.agent-response {
+    tint: $primary 3%;
+}
+
+/* -- Info / dim ------------------------------------------------- */
+.info-message {
+    tint: $secondary 3%;
+}
+
+/* -- System notice / warning ------------------------------------ */
+.system-notice {
+    tint: $warning 4%;
+}
+
+/* -- Tool panels ------------------------------------------------ */
+.tool-panel {
+    tint: $primary 3%;
+}
+.tool-panel.completed {
+    tint: $success 4%;
+}
+.tool-panel.failed {
+    outline: solid $error;
+}
+.tool-panel.running {
+    outline: solid $warning;
+}
+
+/* -- Error panels ----------------------------------------------- */
+.error-panel {
+    outline: solid $error;
+}

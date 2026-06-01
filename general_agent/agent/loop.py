@@ -434,7 +434,7 @@ async def _execute_tool(
     if perm.behavior == "ask":
         if agent_state and getattr(agent_state, "is_fork_agent", False):
             pass  # Fork agent: auto-allow (no terminal for user prompt)
-        elif on_permission and on_permission(name, args):
+        elif on_permission and await _maybe_await_permission(on_permission, name, args):
             pass  # User approved
         elif tool.is_read_only(args):
             pass  # Read-only: auto-allow
@@ -462,6 +462,16 @@ def _tool_error(tool_use_id: str, message: str) -> dict[str, Any]:
         "content": message,
         "is_error": True,
     }
+
+
+async def _maybe_await_permission(callback, tool_name: str, args: dict) -> bool:
+    """Call a permission callback that may be sync or async."""
+    import inspect
+
+    result = callback(tool_name, args)
+    if inspect.isawaitable(result):
+        return await result
+    return result
 
 
 def _get_tool_definitions(registry: ToolsRegistry) -> list[dict[str, Any]]:
