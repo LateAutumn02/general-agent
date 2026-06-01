@@ -336,3 +336,106 @@ def _take_n_lines_raw(text: str, n: int) -> str:
             if newlines >= n:
                 break
     return "".join(result).rstrip("\n")
+
+
+# ---------------------------------------------------------------------------
+# Rich renderers (for Textual UI)
+# ---------------------------------------------------------------------------
+
+
+def render_tool_call(name: str, detail: str = "", success: bool | None = None):
+    """Return a Rich ``Text`` for a tool call status indicator.
+
+    Args:
+        name:    Tool name (Bash, Read, Edit, etc.)
+        detail:  Key parameter (command, file_path, etc.)
+        success: True=green dot, False=red dot, None=gray dot (pending)
+    """
+    from rich.text import Text
+
+    if success is True:
+        dot = Text("●", style="green")
+    elif success is False:
+        dot = Text("●", style="red")
+    else:
+        dot = Text("○", style="dim")
+
+    result = Text.assemble(
+        "  ", dot, " ",
+        (name, "yellow"),
+    )
+    if detail:
+        result.append(f"({detail})", style="dim")
+    return result
+
+
+def render_bash_panel(out: BashOut):
+    """Render bash output as a Rich ``Panel`` suitable for Textual display.
+
+    Returns a ``rich.panel.Panel`` with:
+    - stdout lines (plain text)
+    - stderr lines (red, separated by a dim rule)
+    - status subtitle (exit code, duration, Done/Interrupted/Timed out)
+    """
+    from rich.panel import Panel
+    from rich.text import Text
+
+    content = Text()
+    w = max(60, min(120, out.stdout and len(out.stdout.split("\n", 1)[0]) + 4 or 60))
+
+    if out.stdout:
+        out_lines = out.stdout.split("\n")
+        for i, line in enumerate(out_lines):
+            if i >= 5:
+                content.append(f"… +{len(out_lines) - 5} lines", style="dim")
+                break
+            content.append(f"{line[:w]}\n")
+        content.rstrip()
+
+    if out.stderr:
+        if out.stdout:
+            content.append("\n")
+            content.append("─" * 8 + " stderr " + "─" * (w - 16) + "\n", style="dim")
+        err_lines = out.stderr.split("\n")
+        for i, line in enumerate(err_lines):
+            if i >= 3:
+                content.append(f"… +{len(err_lines) - 3} lines", style="dim")
+                break
+            content.append(f"{line[:w]}\n", style="red")
+        content.rstrip()
+
+    if not out.stdout and not out.stderr:
+        if out.is_silent:
+            content.append("Done", style="dim")
+        else:
+            content.append("(no output)", style="dim")
+
+    # Status subtitle
+    parts: list[str] = []
+    if out.interrupted:
+        parts.append("[yellow]Interrupted[/yellow]")
+    elif out.timed_out:
+        parts.append("[red]Timed out[/red]")
+    elif out.exit_code != 0:
+        parts.append(f"[red]exit {out.exit_code}[/red]")
+    elif out.is_silent:
+        parts.append("[green]Done[/green]")
+    else:
+        parts.append("[green]ok[/green]")
+
+    if out.duration_ms > 0:
+        parts.append(f"[dim]{format_duration(out.duration_ms)}[/dim]")
+
+    subtitle = " · ".join(parts)
+
+    border_style = "red" if (out.exit_code != 0 or out.timed_out or out.interrupted) else "green"
+
+    return Panel(
+        content,
+        title="stdout",
+        title_align="left",
+        subtitle=subtitle,
+        subtitle_align="right",
+        border_style=border_style,
+        padding=(0, 1),
+    )
