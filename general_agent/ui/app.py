@@ -18,7 +18,7 @@ from textual import events
 from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.containers import Container
-from textual.widgets import LoadingIndicator, OptionList, Static
+from textual.widgets import Input, LoadingIndicator, OptionList, Static
 from textual.widgets.option_list import Option
 from textual.screen import ModalScreen
 
@@ -73,7 +73,7 @@ class TextualAgentApp(App[None]):
 
     BINDINGS = [
         Binding("escape", "cancel_request", "Cancel", show=False, priority=True),
-        Binding("ctrl+c", "noop", "", show=False),
+        Binding("ctrl+c", "copy_or_exit", "", show=False, priority=True),
     ]
 
     STREAM_THROTTLE_MS = 100.0
@@ -100,6 +100,7 @@ class TextualAgentApp(App[None]):
         self._request_queue: asyncio.Queue[str] = asyncio.Queue()
         self._processing = False
         self._pending_permission: tuple | None = None
+        self._permission_allow_always: set[str] = set()
         self._streaming: StreamingHandler | None = None
         self._request_start: float = 0.0
 
@@ -202,17 +203,43 @@ class TextualAgentApp(App[None]):
 
             # ---- write final agent response into chat ----
             final_response = self._extract_final_response(all_messages)
-            if final_response:
+            result_is_error = bool(
+                result_text and result_text.lstrip().lower().startswith(("error", "agent stopped"))
+            )
+            if result_is_error:
+                self._write_error(result_text)
+            elif final_response:
                 self._write_agent_response(final_response)
             elif result_text and result_text.strip():
                 self._write_agent_response(result_text)
 
+        except asyncio.CancelledError:
+            self._write_error("Request worker was cancelled.")
+            raise
         except Exception as exc:
-            self._write_error(f"Error: {exc}")
+            self._write_error(f"{type(exc).__name__}: {exc}")
         finally:
             self.loading.remove_class("active")
             self._processing = False
             self._refresh_status_bar()
+
+    def _copy_selection_to_clipboard(self) -> bool:
+        """Copy selected TUI text, if any, without treating Ctrl+C as quit."""
+        try:
+            selected = self.screen.get_selected_text()
+        except Exception:
+            selected = None
+
+        if not selected:
+            return False
+
+        self.copy_to_clipboard(selected)
+        try:
+            self.clear_selection()
+        except Exception:
+            pass
+        self.notify("Copied selection", severity="information", timeout=1)
+        return True
 
     # -- message handlers ------------------------------------------
 
@@ -243,12 +270,31 @@ class TextualAgentApp(App[None]):
             self._streaming.reset()
 
     async def on_permission_request(self, message: PermissionRequest) -> None:
-        """Show a notification for tool permission."""
-        self.notify(
-            f"{message.tool_name} needs permission — y/n",
-            severity="warning",
-            timeout=30,
+        """Show an interactive permission prompt for tool calls."""
+        self.push_screen(
+            PermissionPickerScreen(message.tool_name, message.args),
+            callback=self._on_permission_picked,
         )
+
+    def _on_permission_picked(self, decision: tuple[bool, bool, str] | None) -> None:
+        """Resolve the pending tool permission request."""
+        pending = self._pending_permission
+        if pending is None:
+            return
+        tool_name, _preview, event, result = pending
+        allowed, remember, reason = decision or (False, False, "")
+        result[0] = allowed
+        self._pending_permission = None
+        if allowed:
+            if remember:
+                self._permission_allow_always.add(tool_name)
+                self._write_info(f"Allowed {tool_name}; future {tool_name} calls will skip prompts this session.")
+            else:
+                self._write_info(f"Allowed {tool_name}.")
+        else:
+            suffix = f"\nReason: {reason}" if reason else ""
+            self._write_warning(f"Denied {tool_name}.{suffix}")
+        event.set()
 
     async def on_system_notice_display(self, message: SystemNoticeDisplay) -> None:
         self._write_warning(message.notice)
@@ -341,6 +387,49 @@ class TextualAgentApp(App[None]):
             return
         md = Markdown(text)
         self.chat_container.write(md, panel_meta=PanelMeta(css_class="agent-response"))
+
+    def _render_resumed_context(self, messages: list[dict]) -> None:
+        """Render restored conversation messages back into the chat pane."""
+        for msg in messages:
+            role = msg.get("role", "")
+            text = self._content_to_display_text(msg.get("content", ""))
+            if not text.strip():
+                continue
+            if role == "user":
+                self._write_user_message(text)
+            elif role == "assistant":
+                self._write_agent_response(text)
+            elif role == "system":
+                self._write_info(text)
+            else:
+                self._write_info(f"{role or 'message'}: {text}")
+
+    @staticmethod
+    def _content_to_display_text(content: Any) -> str:
+        """Convert API content blocks into readable transcript text."""
+        if isinstance(content, str):
+            return content
+        if not isinstance(content, list):
+            return str(content) if content is not None else ""
+
+        parts: list[str] = []
+        for block in content:
+            if not isinstance(block, dict):
+                parts.append(str(block))
+                continue
+            block_type = block.get("type")
+            if block_type == "text":
+                parts.append(block.get("text", ""))
+            elif block_type == "tool_use":
+                name = block.get("name", "tool")
+                tool_input = block.get("input", {})
+                parts.append(f"[tool use] {name}: {tool_input}")
+            elif block_type == "tool_result":
+                result = block.get("content", "")
+                parts.append(f"[tool result] {TextualAgentApp._content_to_display_text(result)}")
+            else:
+                parts.append(str(block))
+        return "\n".join(p for p in parts if p)
 
     def _write_info(self, text: str) -> None:
         self.chat_container.write(
@@ -458,15 +547,26 @@ class TextualAgentApp(App[None]):
         if picked is None:
             return
         try:
-            conv = await _load_session_by_id(picked, os.getcwd())
+            conv, resolved_session_id, file_path = await _load_session_by_id(picked, os.getcwd())
             if not conv:
-                self._write_error(f"Session {picked[:8]}… could not be loaded.")
+                self._write_error(f"Session {picked[:8]} could not be loaded.")
                 return
+
+            from general_agent.bootstrap.state import set_session_id
+            from general_agent.session.store import get_session_store
+
+            set_session_id(resolved_session_id)
+            store = get_session_store()
+            store._session_file = file_path  # noqa: SLF001
+            store._message_uuids = set()  # noqa: SLF001
+
             self.agent_state.messages.clear()
             self.agent_state.messages.extend(conv)
             self.chat_container.clear()
             self._show_banner()
-            self._write_info(f"Resumed session {picked[:8]}… ({len(conv)} messages)")
+            self._write_info(f"Resumed session {resolved_session_id[:8]} ({len(conv)} messages)")
+            self._render_resumed_context(conv)
+            self._refresh_status_bar()
         except Exception as e:
             self._write_error(f"Resume failed: {e}")
 
@@ -503,8 +603,23 @@ class TextualAgentApp(App[None]):
 
     # -- key bindings ----------------------------------------------
 
-    def action_noop(self) -> None:
-        """Absorb the default ctrl+c → quit binding.  Screen handles copy."""
+    def action_copy_or_exit(self) -> None:
+        """Copy selected text, otherwise require a second Ctrl+C to quit."""
+
+        if self._copy_selection_to_clipboard():
+            return
+
+        now = time.monotonic()
+        last = getattr(self, "_last_ctrl_c", 0.0)
+        self._last_ctrl_c = now
+        if now - last < 1.0:
+            self.exit()
+            return
+
+        if self._processing:
+            self.notify("Press Ctrl+C again to exit. Press Esc to cancel the request.", severity="warning", timeout=2)
+        else:
+            self.notify("Press Ctrl+C again to exit", severity="warning", timeout=1)
 
     async def action_cancel_request(self) -> None:
         """Single Esc: cancel current request.  Double Esc (within 1s, idle): quit."""
@@ -520,6 +635,103 @@ class TextualAgentApp(App[None]):
             self.exit()
         else:
             self.notify("Press Esc again to exit  (/exit, /quit also work)", severity="warning", timeout=1)
+
+
+# ---------------------------------------------------------------------------
+# Permission picker screen
+# ---------------------------------------------------------------------------
+
+
+class PermissionPickerScreen(ModalScreen[tuple[bool, bool, str] | None]):
+    """Keyboard-first permission dialog for tool calls."""
+
+    BINDINGS = [
+        Binding("escape", "deny", "Deny", show=False),
+        Binding("a", "allow", "Allow", show=False),
+        Binding("d", "allow_always", "Always Allow", show=False),
+        Binding("n", "deny", "Deny", show=False),
+        Binding("tab", "focus_reason", "Reason", show=False),
+    ]
+
+    def __init__(self, tool_name: str, args: dict) -> None:
+        super().__init__()
+        self._tool_name = tool_name
+        self._args = args
+        self._reason_mode = False
+
+    def compose(self) -> ComposeResult:
+        preview = self._format_preview(self._args)
+        options = [
+            Option("── Tool permission ──", disabled=True),
+            Option("Yes", id="allow"),
+            Option("Yes, don't ask again", id="allow_always"),
+            Option("No  [dim](Tab to tell the agent what to do differently)[/dim]", id="deny"),
+        ]
+        if preview:
+            options.insert(1, Option(f"Request: {preview}", disabled=True))
+        yield OptionList(*options, id="permission-list")
+        yield Input(placeholder="Tell the agent what to do differently", id="permission-reason")
+
+    def on_mount(self) -> None:
+        ol = self.query_one(OptionList)
+        ol.highlighted = 2 if self._format_preview(self._args) else 1
+        ol.focus()
+        self.query_one("#permission-reason", Input).display = False
+
+    def on_option_list_option_selected(self, event: OptionList.OptionSelected) -> None:
+        event.stop()
+        self._select(event.option_list)
+
+    def on_input_submitted(self, _event: Input.Submitted) -> None:
+        self.action_deny()
+
+    def _select(self, ol: OptionList) -> None:
+        opt = ol.get_option_at_index(ol.highlighted)
+        if opt.id == "allow":
+            self.dismiss((True, False, ""))
+        elif opt.id == "allow_always":
+            self.dismiss((True, True, ""))
+        elif opt.id == "deny":
+            self.dismiss((False, False, ""))
+
+    def action_select_highlighted(self) -> None:
+        self._select(self.query_one(OptionList))
+
+    def action_allow(self) -> None:
+        self.dismiss((True, False, ""))
+
+    def action_allow_always(self) -> None:
+        self.dismiss((True, True, ""))
+
+    def action_deny(self) -> None:
+        if self._reason_mode:
+            reason = self.query_one("#permission-reason", Input).value.strip()
+            self.dismiss((False, False, reason))
+        else:
+            self.dismiss((False, False, ""))
+
+    def action_focus_reason(self) -> None:
+        ol = self.query_one(OptionList)
+        opt = ol.get_option_at_index(ol.highlighted)
+        if opt.id == "deny":
+            self._reason_mode = True
+            reason = self.query_one("#permission-reason", Input)
+            reason.display = True
+            reason.focus()
+        else:
+            ol.action_cursor_down()
+
+    @staticmethod
+    def _format_preview(args: dict) -> str:
+        if not args:
+            return ""
+        for key in ("command", "file_path", "path", "url", "pattern"):
+            value = args.get(key)
+            if isinstance(value, str) and value:
+                text = value.replace("\n", " ")
+                return text[:120] + ("..." if len(text) > 120 else "")
+        text = str(args).replace("\n", " ")
+        return text[:120] + ("..." if len(text) > 120 else "")
 
 
 # ---------------------------------------------------------------------------
@@ -586,7 +798,7 @@ class SessionPickerScreen(ModalScreen[str | None]):
         self.dismiss(None)
 
 
-async def _load_session_by_id(session_id: str, cwd: str) -> list[dict]:
+async def _load_session_by_id(session_id: str, cwd: str) -> tuple[list[dict], str, str]:
     """Load conversation messages from a session file."""
     import os as _os
     from general_agent.session.discovery import list_sessions
@@ -601,9 +813,16 @@ async def _load_session_by_id(session_id: str, cwd: str) -> list[dict]:
             conv: list[dict] = []
             for m in msgs:
                 inner = m.get("message", m)
-                conv.append({
-                    "role": inner.get("role", m.get("type", "")),
+                role = inner.get("role", m.get("type", ""))
+                entry: dict[str, Any] = {
+                    "role": role,
                     "content": inner.get("content", ""),
-                })
-            return conv
-    return []
+                }
+                if role == "assistant":
+                    if "usage" in inner:
+                        entry["usage"] = inner["usage"]
+                    if "stop_reason" in inner:
+                        entry["stop_reason"] = inner["stop_reason"]
+                conv.append(entry)
+            return conv, s.session_id, path
+    return [], "", ""

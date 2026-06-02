@@ -266,7 +266,14 @@ async def _query_openai(
         }
 
     except Exception as e:
-        logger.warning("Streaming failed (%s)", type(e).__name__)
+        logger.warning("Streaming failed (%s): %s", type(e).__name__, e)
+        yield {
+            "type": "system_error",
+            "message": (
+                f"Streaming failed: {type(e).__name__}: {e}. "
+                "Retrying without streaming..."
+            ),
+        }
         # Fallback to non-streaming
         result = await query_model_without_streaming(
             messages=messages,

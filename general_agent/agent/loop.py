@@ -201,6 +201,11 @@ async def run_agent(
                             on_text(text)
                     continue
 
+                if msg.get("type") == "system_error":
+                    if on_progress:
+                        on_progress(msg.get("message", "API warning"))
+                    continue
+
                 if msg.get("role") == "assistant":
                     state.messages.append(msg)
                     # Repetition detection disabled — too aggressive for complex tasks
@@ -236,8 +241,15 @@ async def run_agent(
 
             logger.error("API call failed (turn %d): %s", state.turn_count, e)
             if state.turn_count < state.max_turns:
+                if on_progress:
+                    on_progress(
+                        f"API call failed on turn {state.turn_count}: "
+                        f"{type(e).__name__}: {e}. Retrying..."
+                    )
                 await asyncio.sleep(1)
                 continue
+            if on_progress:
+                on_progress(f"API call failed after {state.turn_count} turns: {type(e).__name__}: {e}")
             return f"Error after {state.turn_count} retries: {e}", state.messages
 
         # 3. If no tool_use blocks → handle auto-memory then return
@@ -267,6 +279,10 @@ async def run_agent(
             args_input = block.get("input", {})
             detail = _tool_detail(name, args_input)
 
+            if on_progress:
+                from general_agent.ui.render import tool_call
+                on_progress(tool_call(name, detail, success=None))
+
             result, tool_display = await _execute_tool(
                 block, state.tool_registry, on_permission, state,
             )
@@ -274,7 +290,6 @@ async def run_agent(
             # Show result: success/fail dot + display output
             is_error = result.get("is_error", False)
             if on_progress:
-                from general_agent.ui.render import tool_call
                 on_progress(tool_call(name, detail, success=not is_error))
                 if tool_display:
                     on_progress(tool_display)
@@ -303,6 +318,10 @@ async def run_agent(
             tools=[],
             signal=state.abort_signal,
         ):
+            if msg.get("type") == "system_error":
+                if on_progress:
+                    on_progress(msg.get("message", "API warning"))
+                continue
             if msg.get("role") == "assistant":
                 c = msg.get("content", "")
                 if isinstance(c, list):
@@ -310,8 +329,9 @@ async def run_agent(
                         if b.get("type") == "text":
                             assistant_text = b.get("text", "")
                             break
-    except Exception:
-        pass
+    except Exception as e:
+        if on_progress:
+            on_progress(f"Final response failed: {type(e).__name__}: {e}")
     return assistant_text or "Response truncated (max turns reached)", state.messages
 
 

@@ -88,6 +88,9 @@ class RequestBridge:
         """Block until the user approves / denies the tool call."""
         import asyncio
 
+        if tool_name in getattr(self.app, "_permission_allow_always", set()):
+            return True
+
         event = asyncio.Event()
         result: list[bool] = [False]
         self.app._pending_permission = (tool_name, str(args)[:120], event, result)
