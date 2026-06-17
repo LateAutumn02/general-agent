@@ -14,3 +14,12 @@ The previous Python implementation has been archived under `legacy/python/` so t
 ## Next Steps
 
 See `docs/refactor/typescript-rewrite-plan.md` for the migration plan.
+
+## Run The Rewrite Preview
+
+```bash
+bun install
+bun run start
+```
+
+The current preview is a TUI scaffold. It supports normal input, `!` bash mode detection, `/help`, and `/exit`.
