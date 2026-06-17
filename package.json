@@ -11,9 +11,11 @@
     "dev": "bun run ./src/cli/main.tsx",
     "smoke:agent": "bun run ./src/agent/smoke.ts",
     "smoke:compact": "bun run ./src/compact/smoke.ts",
+    "smoke:multi-agent": "bun run ./src/multi-agent/smoke.ts",
     "smoke:permissions": "bun run ./src/permissions/smoke.ts",
     "smoke:session": "bun run ./src/session/smoke.ts",
     "smoke:tasks": "bun run ./src/tasks/smoke.ts",
+    "smoke:swarm": "bun run ./src/swarm/smoke.ts",
     "smoke:tools": "bun run ./src/tools/smoke.ts",
     "typecheck": "tsc --noEmit"
   },
