@@ -8,6 +8,7 @@ export type RuntimeConfig = {
   apiKey?: string
   baseUrl?: string
   providerLabel: string
+  timeoutMs: number
   permissionMode: 'default' | 'acceptEdits' | 'plan' | 'bypassPermissions'
 }
 
@@ -31,6 +32,7 @@ export function loadRuntimeConfig(args: string[], cwd: string): RuntimeConfig {
     ?? readEnv(env, 'GENERAL_AGENT_MODEL')
     ?? (provider === 'openai-compatible' ? 'deepseek-v4-flash' : 'mock')
   const permissionMode = readArg(args, '--permission-mode') as RuntimeConfig['permissionMode'] | undefined
+  const timeoutMs = Number(readArg(args, '--timeout-ms') ?? readEnv(env, 'GENERAL_AGENT_TIMEOUT_MS') ?? 45_000)
   return {
     cwd,
     model,
@@ -38,6 +40,7 @@ export function loadRuntimeConfig(args: string[], cwd: string): RuntimeConfig {
     apiKey,
     baseUrl,
     providerLabel,
+    timeoutMs: Number.isFinite(timeoutMs) ? timeoutMs : 45_000,
     permissionMode: permissionMode ?? 'default',
   }
 }

@@ -9,5 +9,6 @@ export function createModelClient(config: RuntimeConfig): ModelClient {
   return new OpenAICompatibleModelClient({
     apiKey: config.apiKey,
     baseUrl: config.baseUrl ?? 'https://api.deepseek.com',
+    timeoutMs: config.timeoutMs,
   })
 }

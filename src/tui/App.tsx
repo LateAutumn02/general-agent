@@ -410,7 +410,19 @@ export function App({ args, cwd }: AppProps) {
   }
 
   function applyRuntimeEvent(event: RuntimeEvent) {
-    if (event.type === 'assistant_delta') {
+    if (event.type === 'model_request_started') {
+      if (event.afterTool) {
+        setItems(prev => [
+          ...prev,
+          {
+            type: 'tool_summary',
+            id: crypto.randomUUID(),
+            text: 'Continuing after tool result',
+            status: 'running',
+          },
+        ])
+      }
+    } else if (event.type === 'assistant_delta') {
       appendAssistantDelta(event.messageId, event.text)
     } else if (event.type === 'tool_call_started') {
       setItems(prev => [

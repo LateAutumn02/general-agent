@@ -2,6 +2,7 @@ import type { ToolCall, ToolResult } from '../tools/types.js'
 import type { PermissionDecision, PermissionRequest } from '../permissions/types.js'
 
 export type RuntimeEvent =
+  | { type: 'model_request_started'; step: number; afterTool: boolean }
   | { type: 'assistant_delta'; text: string; messageId: string }
   | { type: 'assistant_done'; text: string; messageId: string }
   | { type: 'tool_call_started'; call: ToolCall }

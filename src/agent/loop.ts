@@ -69,6 +69,7 @@ export async function* runAgentTurn(options: RunTurnOptions): AsyncIterable<Runt
     const assistantId = crypto.randomUUID()
     const pendingToolCalls: ToolCall[] = []
 
+    yield { type: 'model_request_started', step, afterTool: step > 0 }
     for await (const event of modelClient.stream({
       model: state.model,
       messages: state.messages,
