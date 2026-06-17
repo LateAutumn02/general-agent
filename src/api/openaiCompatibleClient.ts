@@ -35,7 +35,11 @@ export class OpenAICompatibleModelClient implements ModelClient {
     const pendingToolCalls = new Map<number, PendingToolCall>()
     const timeoutMs = this.options.timeoutMs ?? 45_000
     const requestController = new AbortController()
-    const timeout = setTimeout(() => requestController.abort('model request timed out'), timeoutMs)
+    let timedOut = false
+    const timeout = setTimeout(() => {
+      timedOut = true
+      requestController.abort('model request timed out')
+    }, timeoutMs)
     const abortExternal = () => requestController.abort(signal.reason ?? 'aborted')
     if (signal.aborted) abortExternal()
     signal.addEventListener('abort', abortExternal, { once: true })
@@ -113,9 +117,10 @@ export class OpenAICompatibleModelClient implements ModelClient {
       }
       yield { type: 'message_done' }
     } catch (error) {
-      if (requestController.signal.aborted) {
+      if (timedOut) {
         throw new Error(`Model request timed out after ${Math.max(1, Math.ceil(timeoutMs / 1000))}s`)
       }
+      if (requestController.signal.aborted) throw new Error(String(requestController.signal.reason ?? 'aborted'))
       throw error
     } finally {
       clearTimeout(timeout)

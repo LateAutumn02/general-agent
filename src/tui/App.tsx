@@ -65,6 +65,7 @@ export function App({ args, cwd }: AppProps) {
     model,
   })
   const pendingPermission = useRef<PendingPermission | undefined>(undefined)
+  const activeTurnController = useRef<AbortController | undefined>(undefined)
   const sessionStore = useMemo(() => new JsonlSessionStore(join(cwd, '.general-agent', 'sessions')), [cwd])
 
   useEffect(() => {
@@ -101,6 +102,12 @@ export function App({ args, cwd }: AppProps) {
   useInput((input, key) => {
     if (permission) {
       handlePermissionInput(input, key)
+      return
+    }
+
+    if (key.ctrl && input === 'c' && activeTurnController.current) {
+      activeTurnController.current.abort('cancelled by user')
+      setItems(prev => [...prev, { type: 'error', id: crypto.randomUUID(), text: 'Cancelled current turn' }])
       return
     }
 
@@ -241,6 +248,9 @@ export function App({ args, cwd }: AppProps) {
 
     setProcessing(true)
     setItems(prev => [...prev, { type: 'user', id: crypto.randomUUID(), text: trimmed }])
+    const turnController = new AbortController()
+    activeTurnController.current = turnController
+    let watchdog = createTurnWatchdog(turnController, config.turnTimeoutMs)
     try {
       for await (const event of runAgentTurn({
         state: agentState.current,
@@ -253,10 +263,12 @@ export function App({ args, cwd }: AppProps) {
         modelClient,
         permissionController,
         sessionStore,
+        signal: turnController.signal,
         async decidePermission(permissionEvent) {
           return await waitForPermission(permissionEvent.request)
         },
       })) {
+        watchdog.refresh()
         applyRuntimeEvent(event)
       }
     } catch (error) {
@@ -269,6 +281,8 @@ export function App({ args, cwd }: AppProps) {
         },
       ])
     } finally {
+      watchdog.clear()
+      if (activeTurnController.current === turnController) activeTurnController.current = undefined
       setProcessing(false)
     }
   }
@@ -669,4 +683,21 @@ function readOptionalArg(args: string[], name: string): string | true | undefine
   if (index < 0) return undefined
   const value = args[index + 1]
   return value && !value.startsWith('-') ? value : true
+}
+
+function createTurnWatchdog(controller: AbortController, timeoutMs: number) {
+  let timer: Timer | undefined
+  const refresh = () => {
+    if (timer) clearTimeout(timer)
+    timer = setTimeout(() => {
+      controller.abort(`No runtime event for ${Math.max(1, Math.ceil(timeoutMs / 1000))}s`)
+    }, timeoutMs)
+  }
+  refresh()
+  return {
+    refresh,
+    clear() {
+      if (timer) clearTimeout(timer)
+    },
+  }
 }
