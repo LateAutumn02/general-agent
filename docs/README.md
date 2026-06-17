@@ -146,6 +146,7 @@ Tool:
 | 沙箱安全 | `sandbox/` | Phase 8 已完成 |
 | API 集成 | `api/` | Phase 1 已完成 |
 | Bash UI | `bash-ui/` | Phase 10 已完成 |
+| 多任务后台看板 | `multi-task/` | Phase 11 草案 |
 
 ## 设计理念
 

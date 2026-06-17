@@ -9,7 +9,8 @@
 
 Screen {
     scrollbar-color: $scrollbar;
-    scrollbar-background: $surface;
+    scrollbar-background: black;
+    background: black;
 }
 
 /* -- StatusBar -------------------------------------------------- */
@@ -23,7 +24,7 @@ StatusBar {
 /* -- Viewport (main content area) ------------------------------- */
 #viewport {
     height: 1fr;
-    background: $surface;
+    background: black;
 }
 
 /* -- ChatContainer ---------------------------------------------- */
@@ -31,6 +32,7 @@ ChatContainer {
     height: 1fr;
     padding: 0 0;
     scrollbar-gutter: stable;
+    background: black;
 }
 
 /* -- Loading indicator ------------------------------------------ */
@@ -47,7 +49,7 @@ LoadingIndicator.active {
     height: auto;
     max-height: 50%;
     display: none;
-    background: $surface;
+    background: black;
     padding: 0 1;
     overflow-y: auto;
     scrollbar-gutter: stable;
@@ -58,20 +60,101 @@ LoadingIndicator.active {
 
 /* -- PromptInput ------------------------------------------------ */
 PromptInput {
-    dock: bottom;
-    height: 3;
-    background: $background;
-    border-top: solid $border;
-    border-left: solid $border;
-    border-bottom: solid $border;
-    border-right: solid $border;
+    height: 1;
+    background: #343536;
+    color: #807B6E;
+    border: none;
     padding: 0 1;
 }
 
 PromptInput:focus-within {
-    border-left: solid $primary;
+    border: none;
 }
 
 PromptInput.bash-mode {
-    outline: solid $success;
+    outline: none;
+}
+
+#permission-panel {
+    height: auto;
+    display: none;
+    background: #343536;
+    color: #807B6E;
+    padding: 1 2;
+}
+
+#permission-text {
+    background: #343536;
+    color: #807B6E;
+}
+
+#permission-options {
+    height: auto;
+    max-height: 5;
+    background: #343536;
+    color: #807B6E;
+}
+
+#permission-reason-inline {
+    height: 1;
+    display: none;
+    background: #343536;
+    color: #807B6E;
+    border: none;
+    padding: 0 1;
+}
+
+#session-footer {
+    height: 1;
+    background: #343536;
+    padding: 0 1;
+}
+
+/* -- Background task board -------------------------------------- */
+#task-board-header {
+    height: auto;
+    padding: 1 2 0 2;
+    background: black;
+}
+
+#task-board-list {
+    height: 1fr;
+    padding: 0 2;
+    background: $surface;
+}
+
+#task-board-footer {
+    height: auto;
+    padding: 0 2 1 2;
+    background: $surface;
+    color: $text-muted;
+}
+
+#task-detail {
+    height: 1fr;
+    padding: 1 2;
+    background: $surface;
+}
+
+#task-loading {
+    height: 1;
+    display: none;
+}
+
+#task-loading.active {
+    display: block;
+}
+
+#task-streaming-output {
+    height: auto;
+    max-height: 35%;
+    display: none;
+    background: $surface;
+    padding: 0 1;
+    overflow-y: auto;
+    scrollbar-gutter: stable;
+}
+
+#task-streaming-output.active {
+    display: block;
 }

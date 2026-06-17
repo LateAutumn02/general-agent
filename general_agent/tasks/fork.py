@@ -120,6 +120,8 @@ async def run_forked_agent(
     task: TaskState | None = None,
     task_registry: TaskRegistry | None = None,
     system_prompt_extra: str = "",
+    on_progress: Any = None,
+    on_text: Any = None,
 ) -> tuple[str, list[dict[str, Any]]]:
     """Run a forked sub-agent with its own query loop.
 
@@ -161,7 +163,11 @@ async def run_forked_agent(
         task.status = TaskStatus.RUNNING
 
     try:
-        result_text, messages = await run_agent(child_state)
+        result_text, messages = await run_agent(
+            child_state,
+            on_progress=on_progress,
+            on_text=on_text,
+        )
 
         if task_registry and task:
             task_registry.complete(task.id, result=result_text)

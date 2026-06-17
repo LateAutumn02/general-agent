@@ -19,7 +19,7 @@ class PromptInput(Input):
     ]
 
     def __init__(self) -> None:
-        super().__init__(placeholder="Type a message, or / for commands…")
+        super().__init__(placeholder="Use /skills to list available skills")
 
     # -- actions ----------------------------------------------------
 

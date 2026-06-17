@@ -31,6 +31,7 @@ class StreamingHandler:
         self._text: str = ""
         self._throttle_ms: float = throttle_ms
         self._last_update: float = 0.0
+        self._max_visible_chars: int = 4000
 
     def callback(self, chunk: str) -> None:
         """Accumulate a text delta and throttle-flush."""
@@ -44,7 +45,10 @@ class StreamingHandler:
         if not self._widget.is_attached:
             return
         self._widget.add_class("active")
-        self._widget.update(self._text)
+        visible = self._text[-self._max_visible_chars:]
+        if len(self._text) > self._max_visible_chars:
+            visible = "... streaming output truncated to latest text ...\n" + visible
+        self._widget.update(visible)
 
     def flush(self) -> None:
         """Force-flush all accumulated text."""

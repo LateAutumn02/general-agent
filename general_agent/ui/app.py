@@ -20,7 +20,7 @@ from textual.binding import Binding
 from textual.containers import Container
 from textual.widgets import Input, LoadingIndicator, OptionList, Static
 from textual.widgets.option_list import Option
-from textual.screen import ModalScreen
+from textual.screen import ModalScreen, Screen
 
 from general_agent.bootstrap.state import get_main_loop_model, get_session_id, get_total_cost_usd
 from general_agent.ui.autocomplete import CommandAutoComplete
@@ -63,6 +63,7 @@ STYLE_SUCCESS = "bold green"
 STYLE_WARNING = "bold yellow"
 STYLE_ERROR = "bold red"
 STYLE_MUTED = "dim"
+TRANSCRIPT_SEPARATOR = "\u2500" * 37
 
 
 class TextualAgentApp(App[None]):
@@ -73,6 +74,7 @@ class TextualAgentApp(App[None]):
 
     BINDINGS = [
         Binding("escape", "cancel_request", "Cancel", show=False, priority=True),
+        Binding("left", "open_tasks", "Tasks", show=False, priority=True),
         Binding("ctrl+c", "copy_or_exit", "", show=False, priority=True),
     ]
 
@@ -90,6 +92,7 @@ class TextualAgentApp(App[None]):
     ) -> None:
         super().__init__()
         self.agent_state = state
+        self.agent_state.require_tool_confirmation = True
         self.tool_registry = registry
         self.git_context = git_context
         self.memory_store = memory_store
@@ -103,6 +106,7 @@ class TextualAgentApp(App[None]):
         self._permission_allow_always: set[str] = set()
         self._streaming: StreamingHandler | None = None
         self._request_start: float = 0.0
+        self.task_registry = state.task_registry
 
     # -- layout ----------------------------------------------------
 
@@ -112,14 +116,27 @@ class TextualAgentApp(App[None]):
         self.loading = LoadingIndicator()
         self._streaming_widget = Static("", id="streaming-output")
         self._streaming = StreamingHandler(self._streaming_widget, self.STREAM_THROTTLE_MS)
+        self.permission_panel = Container(id="permission-panel")
+        self.permission_text = Static("", id="permission-text")
+        self.permission_options = OptionList(id="permission-options")
+        self.permission_reason = Input(
+            placeholder="Tell the agent what to do differently",
+            id="permission-reason-inline",
+        )
         self.editor = PromptInput()
+        self.session_footer = Static("", id="session-footer")
 
         yield self.status_bar
         with Container(id="viewport"):
             yield self.chat_container
             yield self.loading
             yield self._streaming_widget
+        with self.permission_panel:
+            yield self.permission_text
+            yield self.permission_options
+            yield self.permission_reason
         yield self.editor
+        yield self.session_footer
         yield CommandAutoComplete(self.editor)
 
     # -- lifecycle -------------------------------------------------
@@ -127,9 +144,24 @@ class TextualAgentApp(App[None]):
     def on_mount(self) -> None:
         self._show_banner()
         self._refresh_status_bar()
+        self._hide_permission_panel()
         self.editor.focus()
         # start the background request worker
         self.run_worker(self._request_worker(), exclusive=False, name="request_worker")
+
+    def on_key(self, event: events.Key) -> None:
+        if not getattr(self, "permission_panel", None) or not self.permission_panel.display:
+            return
+        if event.key == "y":
+            event.stop()
+            self._on_permission_picked((True, False, ""))
+        elif event.key == "p":
+            event.stop()
+            self._on_permission_picked((True, True, ""))
+        elif event.key == "escape":
+            event.stop()
+            self.permission_reason.display = True
+            self.permission_reason.focus()
 
     # -- input handling --------------------------------------------
 
@@ -198,7 +230,6 @@ class TextualAgentApp(App[None]):
 
             # ---- finalise streaming ----
             if self._streaming:
-                self._streaming.flush()
                 self._streaming.reset()
 
             # ---- write final agent response into chat ----
@@ -255,7 +286,12 @@ class TextualAgentApp(App[None]):
         don't apply additional CSS border chrome — just a margin for spacing.
         """
         self.loading.remove_class("active")
-        self.chat_container.write(message.renderable, panel_meta=PanelMeta(css_class="chat-message"))
+        if isinstance(message.renderable, Text):
+            self._write_tool_message(_plain_progress(message.renderable))
+            return
+        summary = _summarize_tool_renderable(message.renderable)
+        if summary:
+            self._write_tool_message(summary)
 
     def on_stream_chunk(self, message: StreamChunk) -> None:
         """Forward streaming delta to StreamingHandler."""
@@ -270,11 +306,8 @@ class TextualAgentApp(App[None]):
             self._streaming.reset()
 
     async def on_permission_request(self, message: PermissionRequest) -> None:
-        """Show an interactive permission prompt for tool calls."""
-        self.push_screen(
-            PermissionPickerScreen(message.tool_name, message.args),
-            callback=self._on_permission_picked,
-        )
+        """Show an inline bottom permission prompt for tool calls."""
+        self._show_permission_panel(message.tool_name, message.args)
 
     def _on_permission_picked(self, decision: tuple[bool, bool, str] | None) -> None:
         """Resolve the pending tool permission request."""
@@ -295,6 +328,59 @@ class TextualAgentApp(App[None]):
             suffix = f"\nReason: {reason}" if reason else ""
             self._write_warning(f"Denied {tool_name}.{suffix}")
         event.set()
+        self._hide_permission_panel()
+
+    def _show_permission_panel(self, tool_name: str, args: dict) -> None:
+        preview = PermissionPickerScreen._format_preview(args)
+        reason = args.get("description") or f"Allow the agent to run {tool_name}?"
+        command = args.get("command") or preview
+
+        text = Text()
+        text.append(f"* Running {tool_name}\n\n", style="bold white")
+        text.append("Would you like to run the following command?\n\n", style="white")
+        text.append(f"Reason: {reason}\n\n", style="dim")
+        if command:
+            text.append(f"$ {command}", style="bold")
+        self.permission_text.update(text)
+
+        self.permission_options.clear_options()
+        self.permission_options.add_options([
+            Option("1. Yes, proceed (y)", id="allow"),
+            Option(f"2. Yes, and don't ask again for commands that start with `{command or tool_name}` (p)", id="allow_always"),
+            Option("3. No, and tell Codex what to do differently (esc)", id="deny"),
+        ])
+        self.permission_options.highlighted = 0
+        self.permission_reason.value = ""
+        self.permission_reason.display = False
+        self.permission_panel.display = True
+        self.permission_options.focus()
+
+    def _hide_permission_panel(self) -> None:
+        if hasattr(self, "permission_panel"):
+            self.permission_panel.display = False
+            self.permission_text.update("")
+            self.permission_options.clear_options()
+            self.permission_reason.value = ""
+            self.permission_reason.display = False
+
+    def on_option_list_option_selected(self, event: OptionList.OptionSelected) -> None:
+        if event.option_list is not getattr(self, "permission_options", None):
+            return
+        event.stop()
+        option_id = event.option.id
+        if option_id == "allow":
+            self._on_permission_picked((True, False, ""))
+        elif option_id == "allow_always":
+            self._on_permission_picked((True, True, ""))
+        elif option_id == "deny":
+            self.permission_reason.display = True
+            self.permission_reason.focus()
+
+    def on_input_submitted(self, event: Input.Submitted) -> None:
+        if event.input is not getattr(self, "permission_reason", None):
+            return
+        event.stop()
+        self._on_permission_picked((False, False, event.value.strip()))
 
     async def on_system_notice_display(self, message: SystemNoticeDisplay) -> None:
         self._write_warning(message.notice)
@@ -328,9 +414,14 @@ class TextualAgentApp(App[None]):
                 ("/compact", "Compress conversation context"),
                 ("/sandbox on|off", "Toggle sandbox"),
                 ("/resume", "Resume a previous session"),
+                ("/tasks", "Open background task view"),
             ]:
                 table.add_row(cmd, desc)
             self.chat_container.write(table)
+            return True
+
+        if name == "/tasks":
+            self.action_open_tasks()
             return True
 
         if name == "/resume":
@@ -398,7 +489,7 @@ class TextualAgentApp(App[None]):
             if role == "user":
                 self._write_user_message(text)
             elif role == "assistant":
-                self._write_agent_response(text)
+                self._write_agent_response(_truncate_display_text(text))
             elif role == "system":
                 self._write_info(text)
             else:
@@ -426,7 +517,7 @@ class TextualAgentApp(App[None]):
                 parts.append(f"[tool use] {name}: {tool_input}")
             elif block_type == "tool_result":
                 result = block.get("content", "")
-                parts.append(f"[tool result] {TextualAgentApp._content_to_display_text(result)}")
+                parts.append(f"[tool result] {_truncate_display_text(TextualAgentApp._content_to_display_text(result), 1200)}")
             else:
                 parts.append(str(block))
         return "\n".join(p for p in parts if p)
@@ -476,12 +567,61 @@ class TextualAgentApp(App[None]):
 
         self.chat_container.write(banner)
 
+    def _write_user_message(self, text: str) -> None:
+        """Display the user's message in the compact transcript."""
+        msg = Text()
+        msg.append("\u203a ", style=STYLE_PRIMARY)
+        msg.append(_truncate_display_text(text), style=STYLE_PRIMARY)
+        self.chat_container.write(msg, panel_meta=PanelMeta(css_class="user-message transcript-message"))
+        self._write_separator()
+
+    def _write_agent_response(self, text: str) -> None:
+        """Write the final agent response into the compact transcript."""
+        if not text.strip():
+            return
+        self._write_bullet_message(_truncate_display_text(text), style="white", css_class="agent-response")
+
+    def _write_info(self, text: str) -> None:
+        self._write_bullet_message(_truncate_display_text(text), style=STYLE_MUTED, css_class="info-message")
+
+    def _write_warning(self, text: str) -> None:
+        self._write_bullet_message(_truncate_display_text(text), style=STYLE_WARNING, css_class="system-notice")
+
+    def _write_error(self, text: str) -> None:
+        self._write_bullet_message(_truncate_display_text(text), style=STYLE_ERROR, css_class="error-panel")
+
+    def _write_tool_message(self, text: str) -> None:
+        summary = _summarize_tool_progress(text)
+        if summary:
+            self._write_bullet_message(summary, style=STYLE_MUTED, css_class="tool-panel")
+
+    def _write_bullet_message(self, text: str, *, style: str, css_class: str) -> None:
+        if not text.strip():
+            return
+        msg = Text()
+        msg.append("\u2022 ", style=STYLE_MUTED)
+        msg.append(text.strip(), style=style)
+        self.chat_container.write(msg, panel_meta=PanelMeta(css_class=f"{css_class} transcript-message"))
+        self._write_separator()
+
+    def _write_separator(self) -> None:
+        self.chat_container.write(
+            Text(TRANSCRIPT_SEPARATOR, style=STYLE_MUTED),
+            panel_meta=PanelMeta(css_class="chat-separator"),
+        )
+
     def _refresh_status_bar(self) -> None:
         raw = get_main_loop_model()
         display = MODEL_DISPLAY_NAMES.get(raw, raw)
         cost = get_total_cost_usd()
         est = len(self.agent_state.messages) * 512
         self.status_bar.update_stats(model=display, tokens=est, max_tokens=200000, session_cost=cost)
+        if hasattr(self, "session_footer"):
+            footer = Text()
+            footer.append(display, style="#F6D58B")
+            footer.append("  ")
+            footer.append(os.getcwd(), style="#9FCF9B")
+            self.session_footer.update(footer)
 
     def _extract_final_response(self, all_messages: list[dict]) -> str:
         """Extract the last assistant text from the message history."""
@@ -621,8 +761,17 @@ class TextualAgentApp(App[None]):
         else:
             self.notify("Press Ctrl+C again to exit", severity="warning", timeout=1)
 
+    def action_open_tasks(self) -> None:
+        """Open the background task dashboard."""
+        self.push_screen(TaskBoardScreen(self))
+
     async def action_cancel_request(self) -> None:
         """Single Esc: cancel current request.  Double Esc (within 1s, idle): quit."""
+        if getattr(self, "permission_panel", None) and self.permission_panel.display:
+            self.permission_reason.display = True
+            self.permission_reason.focus()
+            return
+
         if self._processing:
             self.agent_state.abort_signal.set()
             self._write_info("Request cancelled.")
@@ -635,6 +784,514 @@ class TextualAgentApp(App[None]):
             self.exit()
         else:
             self.notify("Press Esc again to exit  (/exit, /quit also work)", severity="warning", timeout=1)
+
+
+# ---------------------------------------------------------------------------
+# Background task board
+# ---------------------------------------------------------------------------
+
+
+class TaskBoardScreen(Screen[None]):
+    """Dashboard for user-managed task sessions."""
+
+    BINDINGS = [
+        Binding("escape", "close", "Back", show=False),
+        Binding("right", "close", "Back", show=False),
+        Binding("n", "new_task", "New", show=True),
+        Binding("enter", "open_task", "Open", show=True),
+        Binding("r", "refresh_tasks", "Refresh", show=True),
+        Binding("c", "complete_task", "Complete", show=True),
+    ]
+
+    def __init__(self, owner: TextualAgentApp) -> None:
+        super().__init__()
+        self._owner = owner
+        self._task_registry = owner.task_registry
+
+    def compose(self) -> ComposeResult:
+        yield Static("", id="task-board-header")
+        yield OptionList(id="task-board-list")
+        yield Static(
+            "N creates a task. Each row is its own general-agent session. "
+            "Open one to inspect or continue it.",
+            id="task-board-footer",
+        )
+
+    def on_mount(self) -> None:
+        self._refresh()
+        self.query_one(OptionList).focus()
+        self.set_interval(1.0, self._refresh)
+
+    def on_key(self, event: events.Key) -> None:
+        if event.key == "right":
+            event.stop()
+            self.dismiss()
+
+    def action_close(self) -> None:
+        self.dismiss()
+
+    def action_refresh_tasks(self) -> None:
+        self._refresh()
+
+    def action_new_task(self) -> None:
+        self.app.push_screen(NewTaskScreen(), callback=self._on_new_task)
+
+    def _on_new_task(self, prompt: str | None) -> None:
+        if not prompt or not prompt.strip():
+            return
+        task = _create_user_task(self._owner, prompt.strip())
+        _start_task_turn(self._owner, task)
+        self._refresh()
+        self.app.push_screen(TaskSessionScreen(self._owner, task))
+
+    def action_open_task(self) -> None:
+        task = self._highlighted_task()
+        if task:
+            self.app.push_screen(TaskSessionScreen(self._owner, task))
+
+    def action_complete_task(self) -> None:
+        task = self._highlighted_task()
+        if task and str(task.status) != "running":
+            from general_agent.tasks.task import TaskStatus
+            task.status = TaskStatus.COMPLETED
+            task.end_time = time.time()
+            task.summary = task.summary or task.activity or "Marked complete"
+            self._refresh()
+
+    def _highlighted_task(self):
+        option_list = self.query_one(OptionList)
+        if option_list.option_count == 0:
+            return None
+        option = option_list.get_option_at_index(option_list.highlighted)
+        return self._task_registry.get(str(option.id or ""))
+
+    def on_option_list_option_selected(self, event: OptionList.OptionSelected) -> None:
+        event.stop()
+        task = self._task_registry.get(str(event.option.id or ""))
+        if task:
+            self.app.push_screen(TaskSessionScreen(self._owner, task))
+
+    def _refresh(self) -> None:
+        tasks = sorted(self._task_registry.all(), key=lambda t: t.start_time, reverse=True)
+        awaiting = [t for t in tasks if _task_needs_input(t)]
+        working = [t for t in tasks if str(t.status) == "running"]
+        completed = [t for t in tasks if t not in awaiting and t not in working]
+
+        header = Text()
+        header.append(" ▐▛███▜▌   general-agent\n", style="bold cyan")
+        header.append(f"▝▜█████▛▘  {get_main_loop_model()} · {os.getcwd()}\n", style="bold white")
+        header.append(
+            f"  ▘▘ ▝▝    {len(awaiting)} awaiting input · "
+            f"{len(working)} working · {len(completed)} completed",
+            style="dim",
+        )
+        self.query_one("#task-board-header", Static).update(header)
+
+        option_list = self.query_one(OptionList)
+        previous_id = None
+        if option_list.option_count:
+            try:
+                previous_id = option_list.get_option_at_index(option_list.highlighted).id
+            except Exception:
+                previous_id = None
+
+        options: list[Option] = []
+        self._add_group(options, "Needs input", awaiting)
+        self._add_group(options, "Working", working)
+        self._add_group(options, "Completed", completed)
+        if not tasks:
+            options.append(Option("No task sessions yet. Press N to create one.", disabled=True))
+
+        option_list.clear_options()
+        option_list.add_options(options)
+
+        if previous_id:
+            try:
+                option_list.highlighted = option_list.get_option_index(str(previous_id))
+                return
+            except Exception:
+                pass
+        for idx in range(option_list.option_count):
+            if not option_list.get_option_at_index(idx).disabled:
+                option_list.highlighted = idx
+                break
+
+    def _add_group(self, options: list[Option], title: str, tasks: list) -> None:
+        if not tasks:
+            return
+        options.append(Option(title, disabled=True))
+        for task in tasks:
+            options.append(Option(_format_task_row(task), id=task.id))
+
+
+class NewTaskInput(Input):
+    """Input that lets Esc close the new-task modal."""
+
+    BINDINGS = [
+        Binding("escape", "cancel_new_task", "Cancel", show=False, priority=True),
+    ]
+
+    def action_cancel_new_task(self) -> None:
+        self.screen.dismiss(None)
+
+
+class NewTaskScreen(ModalScreen[str | None]):
+    """Small prompt used to create a user-managed task session."""
+
+    BINDINGS = [
+        Binding("escape", "dismiss_none", "Cancel", show=False, priority=True),
+    ]
+
+    def compose(self) -> ComposeResult:
+        yield NewTaskInput(placeholder="New task prompt", id="new-task-input")
+
+    def on_mount(self) -> None:
+        self.query_one(Input).focus()
+
+    def on_key(self, event: events.Key) -> None:
+        if event.key == "escape":
+            event.stop()
+            self.dismiss(None)
+
+    def on_input_submitted(self, event: Input.Submitted) -> None:
+        event.stop()
+        self.dismiss(event.value)
+
+    def action_dismiss_none(self) -> None:
+        self.dismiss(None)
+
+
+class TaskSessionScreen(Screen[None]):
+    """Interactive detail view for a user-managed task session."""
+
+    BINDINGS = [
+        Binding("escape", "close", "Back", show=False),
+        Binding("right", "close", "Back", show=False),
+        Binding("r", "refresh_task", "Refresh", show=True),
+        Binding("c", "complete_task", "Complete", show=True),
+        Binding("y", "approve_permission", "Approve", show=False),
+        Binding("n", "deny_permission", "Deny", show=False),
+    ]
+
+    def __init__(self, owner: TextualAgentApp, task) -> None:
+        super().__init__()
+        self._owner = owner
+        self._task_state = task
+
+    def compose(self) -> ComposeResult:
+        self._task_chat = ChatContainer(id="task-detail")
+        self._task_loading = LoadingIndicator(id="task-loading")
+        self._task_streaming = Static("", id="task-streaming-output")
+        self._task_editor = PromptInput()
+        yield self._task_chat
+        yield self._task_loading
+        yield self._task_streaming
+        yield self._task_editor
+
+    def on_mount(self) -> None:
+        self._refresh()
+        self._task_editor.focus()
+        self.set_interval(1.0, self._refresh)
+
+    def on_key(self, event: events.Key) -> None:
+        if event.key == "right":
+            event.stop()
+            self.dismiss()
+
+    def action_close(self) -> None:
+        self.dismiss()
+
+    def action_refresh_task(self) -> None:
+        self._refresh()
+
+    def action_complete_task(self) -> None:
+        from general_agent.tasks.task import TaskStatus
+        task = self._task_state
+        if str(task.status) != "running":
+            task.status = TaskStatus.COMPLETED
+            task.end_time = time.time()
+            task.summary = task.summary or task.activity or "Marked complete"
+            self._refresh()
+
+    def action_approve_permission(self) -> None:
+        self._resolve_permission(True)
+
+    def action_deny_permission(self) -> None:
+        self._resolve_permission(False)
+
+    def _resolve_permission(self, allowed: bool) -> None:
+        request = getattr(self._task_state, "permission_request", None)
+        if not request:
+            return
+        request["result"][0] = allowed
+        request["event"].set()
+        self._task_state.permission_request = None
+        self._task_state.activity = "Permission approved" if allowed else "Permission denied"
+        self._refresh()
+
+    async def on_editor_submit_requested(self, message: EditorSubmitRequested) -> None:
+        message.stop()
+        text = message.text.strip()
+        if not text:
+            return
+        task = self._task_state
+        if str(task.status) == "running":
+            task.pending_messages.append(text)
+            task.activity = "Queued input while task is working"
+            self._refresh()
+            return
+        _start_task_turn(self._owner, task, text)
+        self._refresh()
+
+    def _refresh(self) -> None:
+        detail = self.query_one("#task-detail", ChatContainer)
+        detail.clear()
+        task = self._task_state
+        if str(task.status) == "running":
+            self._task_loading.add_class("active")
+        else:
+            self._task_loading.remove_class("active")
+        streaming_text = getattr(task, "streaming_text", "")
+        if streaming_text:
+            self._task_streaming.update(_tail_streaming_text(streaming_text))
+            self._task_streaming.add_class("active")
+        else:
+            self._task_streaming.update("")
+            self._task_streaming.remove_class("active")
+
+        header = Text()
+        header.append(f"{task.description or task.id}\n", style="bold cyan")
+        header.append(f"status: {task.status} · id: {task.id} · {_format_elapsed(task)}\n", style="dim")
+        if task.activity:
+            header.append(f"activity: {task.activity}\n", style="yellow")
+        request = getattr(task, "permission_request", None)
+        if request:
+            header.append(
+                f"permission: {request['tool_name']} waiting. Press y to approve, n to deny.\n",
+                style=STYLE_WARNING,
+            )
+        detail.write(header, panel_meta=PanelMeta(css_class="info-message"))
+
+        visible_messages = task.messages[-24:]
+        omitted = len(task.messages) - len(visible_messages)
+        if omitted > 0:
+            detail.write(
+                Text(f"... {omitted} older messages hidden in this view", style=STYLE_MUTED),
+                panel_meta=PanelMeta(css_class="info-message"),
+            )
+
+        for msg in visible_messages:
+            role = msg.get("role", "")
+            text = TextualAgentApp._content_to_display_text(msg.get("content", ""))
+            text = _truncate_display_text(text, 2400)
+            if not text.strip():
+                continue
+            if role == "user":
+                user = Text()
+                user.append(f"╭─ {text}\n", style=STYLE_PRIMARY)
+                user.append("╰─ task input", style=f"dim {STYLE_PRIMARY}")
+                detail.write(user, panel_meta=PanelMeta(css_class="user-message"))
+            elif role == "assistant":
+                detail.write(Markdown(text), panel_meta=PanelMeta(css_class="agent-response"))
+
+        if task.error:
+            detail.write(
+                Panel(Text(task.error, style=STYLE_ERROR), border_style="red"),
+                panel_meta=PanelMeta(css_class="error-panel"),
+            )
+
+
+def _create_user_task(owner: TextualAgentApp, prompt: str):
+    from general_agent.agent.loop import AgentState
+    from general_agent.tasks.task import TaskStatus, TaskType
+
+    title = prompt.strip().splitlines()[0]
+    if len(title) > 60:
+        title = title[:57] + "..."
+    task = owner.task_registry.create(
+        task_type=TaskType.LOCAL_AGENT,
+        status=TaskStatus.PENDING,
+        description=title or "New task",
+        prompt=prompt,
+        messages=[],
+    )
+    task.runtime_state = AgentState(
+        messages=task.messages,
+        tool_registry=owner.tool_registry,
+        git_context=owner.git_context,
+        system_prompt_extra=owner.agent_state.system_prompt_extra,
+        memory_store=owner.memory_store,
+        auto_memory=False,
+        max_turns=owner.agent_state.max_turns,
+        task_registry=owner.task_registry,
+        require_tool_confirmation=True,
+    )
+    task.activity = "Waiting to start"
+    return task
+
+
+def _start_task_turn(owner: TextualAgentApp, task, user_text: str | None = None) -> None:
+    from general_agent.tasks.task import TaskStatus
+
+    if str(task.status) == "running":
+        return
+    if user_text is not None:
+        task.messages.append({"role": "user", "content": user_text})
+    elif not task.messages and task.prompt:
+        task.messages.append({"role": "user", "content": task.prompt})
+
+    task.status = TaskStatus.RUNNING
+    task.end_time = None
+    task.error = None
+    task.summary = ""
+    task.activity = "Starting"
+    task.streaming_text = ""
+
+    async def _run() -> None:
+        from general_agent.agent.loop import run_agent
+
+        state = task.runtime_state
+        if state is None:
+            state = _create_user_task(owner, task.prompt).runtime_state
+            task.runtime_state = state
+        state.messages = task.messages
+        state.abort_signal.clear()
+
+        def _on_progress(msg) -> None:
+            text = _plain_progress(msg)
+            if text:
+                task.activity = text.splitlines()[0][:160]
+
+        def _on_text(chunk: str) -> None:
+            if not chunk:
+                return
+            current = getattr(task, "streaming_text", "")
+            task.streaming_text = current + chunk
+            stripped = chunk.strip()
+            if stripped:
+                task.activity = stripped.splitlines()[-1][:160]
+
+        async def _on_permission(tool_name: str, _args: dict) -> bool:
+            event = asyncio.Event()
+            result = [False]
+            task.permission_request = {
+                "tool_name": tool_name,
+                "args": _args,
+                "event": event,
+                "result": result,
+            }
+            task.status = TaskStatus.PENDING
+            task.activity = f"Needs input: approve {tool_name}"
+            await event.wait()
+            task.status = TaskStatus.RUNNING
+            return result[0]
+
+        try:
+            result_text, messages = await run_agent(
+                state,
+                on_progress=_on_progress,
+                on_text=_on_text,
+                on_permission=_on_permission,
+            )
+            task.messages = messages
+            state.messages = task.messages
+            task.result = result_text
+            task.summary = _summarize_task_result(result_text)
+            task.activity = task.summary or "Completed"
+            task.status = TaskStatus.COMPLETED
+            task.end_time = time.time()
+            task.streaming_text = ""
+        except Exception as exc:
+            task.error = f"{type(exc).__name__}: {exc}"
+            task.summary = task.error
+            task.activity = task.error
+            task.status = TaskStatus.FAILED
+            task.end_time = time.time()
+            task.streaming_text = ""
+
+    task.run_task = asyncio.create_task(_run())
+
+
+def _plain_progress(msg: Any) -> str:
+    if isinstance(msg, str):
+        return msg.strip()
+    if hasattr(msg, "plain"):
+        return str(msg.plain).strip()
+    try:
+        from rich.console import Console
+        console = Console(no_color=True, force_terminal=False, highlight=False, width=100)
+        with console.capture() as capture:
+            console.print(msg)
+        return capture.get().strip()
+    except Exception:
+        return str(msg).strip()
+
+
+def _summarize_tool_progress(text: str, limit: int = 180) -> str:
+    clean = " ".join(line.strip() for line in (text or "").splitlines() if line.strip())
+    clean = clean.strip("•●○◦*·? ")
+    if len(clean) > limit:
+        return clean[: limit - 1].rstrip() + "…"
+    return clean
+
+
+def _summarize_tool_renderable(renderable: Any) -> str:
+    if isinstance(renderable, Text):
+        return _summarize_tool_progress(renderable.plain)
+    if isinstance(renderable, (Panel, Table, Markdown)):
+        return ""
+
+    text = _plain_progress(renderable)
+    for line in text.splitlines():
+        summary = _summarize_tool_progress(line)
+        if summary:
+            return summary
+    return ""
+
+
+def _truncate_display_text(text: str, limit: int = 4000) -> str:
+    if len(text) <= limit:
+        return text
+    omitted = len(text) - limit
+    return text[:limit].rstrip() + f"\n\n... ({omitted} chars hidden in TUI view)"
+
+
+def _tail_streaming_text(text: str, limit: int = 4000) -> str:
+    if len(text) <= limit:
+        return text
+    return "... streaming output truncated to latest text ...\n" + text[-limit:]
+
+
+def _summarize_task_result(text: str) -> str:
+    stripped = " ".join((text or "").split())
+    if len(stripped) > 180:
+        return stripped[:177] + "..."
+    return stripped
+
+
+def _task_needs_input(task) -> bool:
+    return bool(getattr(task, "pending_messages", [])) or str(task.status) == "pending"
+
+
+def _format_task_row(task) -> str:
+    marker = "✻"
+    desc = task.description or task.id
+    activity = task.activity or task.summary or task.error or ""
+    if len(activity) > 96:
+        activity = activity[:93] + "..."
+    suffix = f"  {activity}" if activity else ""
+    return f" {marker} {desc}{suffix} · {_format_elapsed(task)}"
+
+
+def _format_elapsed(task) -> str:
+    end_time = task.end_time or time.time()
+    seconds = max(0, int(end_time - task.start_time))
+    if seconds < 60:
+        return f"{seconds}s"
+    minutes = seconds // 60
+    if minutes < 60:
+        return f"{minutes}m"
+    return f"{minutes // 60}h{minutes % 60:02d}m"
 
 
 # ---------------------------------------------------------------------------

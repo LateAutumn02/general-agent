@@ -6,11 +6,10 @@ The main agent calls this tool to delegate tasks to sub-agents.
 
 from __future__ import annotations
 
-import asyncio
 from typing import Any
 
 from general_agent.tools.tool import Tool, ToolResult
-from general_agent.tasks.task import TaskRegistry, TaskState, TaskType
+from general_agent.tasks.task import TaskState, TaskType
 from general_agent.tasks.fork import create_fork_context, run_forked_agent
 
 
@@ -57,9 +56,6 @@ class AgentTool(Tool):
 
         # Get parent state from context (agent_state passed by loop)
         parent_state = context if context is not None and hasattr(context, "tool_registry") else None
-
-        # Create registry for sub-agent (share parent's or create new)
-        registry = parent_state.tool_registry if parent_state else None
 
         import uuid
         task_id = "b" + uuid.uuid4().hex[:8]

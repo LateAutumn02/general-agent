@@ -18,6 +18,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from general_agent.agent.prompt import build_system_prompt
+from general_agent.tasks.task import TaskRegistry, get_task_registry
 from general_agent.tools.registry import ToolsRegistry
 
 logger = logging.getLogger("general_agent.agent")
@@ -37,10 +38,12 @@ class AgentState:
     auto_memory: bool = True
     memory_interval: int = 3
     is_fork_agent: bool = False
+    require_tool_confirmation: bool = False
     compact_pct: int = 50  # Auto-compact at 50% of context window
     snip_pct: int = 80  # Snip at 80% of context window
     _memory_extracted: bool = field(default=False, repr=False)
     _memory_turns_since: int = field(default=0, repr=False)
+    task_registry: TaskRegistry = field(default_factory=get_task_registry)
 
 
 async def run_agent(
@@ -284,7 +287,7 @@ async def run_agent(
                 on_progress(tool_call(name, detail, success=None))
 
             result, tool_display = await _execute_tool(
-                block, state.tool_registry, on_permission, state,
+                block, state.tool_registry, on_permission, state, on_progress,
             )
 
             # Show result: success/fail dot + display output
@@ -424,6 +427,7 @@ async def _execute_tool(
     registry: ToolsRegistry,
     on_permission: Any = None,
     agent_state: Any = None,
+    on_progress: Any = None,
 ) -> tuple[dict[str, Any], str]:
     """Execute a single tool call with permission handling.
 
@@ -451,19 +455,20 @@ async def _execute_tool(
     if perm.behavior == "deny":
         return _tool_error(tool_id, f"Permission denied: {perm.message}"), ""
 
-    if perm.behavior == "ask":
+    requires_confirmation = perm.behavior == "ask" or getattr(agent_state, "require_tool_confirmation", False)
+    if requires_confirmation:
         if agent_state and getattr(agent_state, "is_fork_agent", False):
             pass  # Fork agent: auto-allow (no terminal for user prompt)
         elif on_permission and await _maybe_await_permission(on_permission, name, args):
             pass  # User approved
-        elif tool.is_read_only(args):
+        elif perm.behavior == "ask" and tool.is_read_only(args):
             pass  # Read-only: auto-allow
         else:
             return _tool_error(tool_id, "Operation requires user confirmation but was denied"), ""
 
     # Execute
     try:
-        result = await tool.call(args, context=agent_state)
+        result = await tool.call(args, context=agent_state, on_progress=on_progress)
         block = tool.map_tool_result_to_block(result.data, tool_id)
         # Extract user-facing display text if available
         display = ""

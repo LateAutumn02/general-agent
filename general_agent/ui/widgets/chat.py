@@ -132,9 +132,12 @@ class CopyOnSelectStatic(Static):
         visual = self._render()
         if isinstance(visual, SelectableRichVisual):
             width = self.size.width
-            strips = Visual.to_strips(self, visual, width, None, self.visual_style, pad=False)
-            text = "\n".join(strip.text for strip in strips)
-            return selection.extract(text), "\n"
+            try:
+                strips = Visual.to_strips(self, visual, width, None, self.visual_style, pad=False)
+                text = "\n".join(strip.text for strip in strips)
+                return selection.extract(text), "\n"
+            except Exception:
+                return None
         return super().get_selection(selection)
 
 

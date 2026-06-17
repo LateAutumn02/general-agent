@@ -13,13 +13,10 @@
 
 /* -- User message block ----------------------------------------- */
 .user-message {
-    margin: 0 0 1 0;
+    margin: 0;
     padding: 0 0 0 1;
-    background: $background;
-    border-top: solid $background;
-    border-right: solid $background;
-    border-bottom: solid $background;
-    border-left: solid $primary;
+    background: black;
+    border: none;
 }
 
 /* -- Expand variant --------------------------------------------- */
@@ -33,45 +30,55 @@
 .tool-panel,
 .error-panel,
 .system-notice {
-    background: $surface;
+    background: black;
     padding: 0 1;
-    margin: 0 0 1 0;
-    border-top: solid $border;
-    border-left: solid $border;
-    border-bottom: solid $border;
-    border-right: solid $border;
+    margin: 0;
+    border: none;
 }
 
 /* -- Agent response --------------------------------------------- */
 .agent-response {
-    tint: $primary 3%;
+    background: black;
 }
 
 /* -- Info / dim ------------------------------------------------- */
 .info-message {
-    tint: $secondary 3%;
+    background: black;
 }
 
 /* -- System notice / warning ------------------------------------ */
 .system-notice {
-    tint: $warning 4%;
+    background: black;
 }
 
 /* -- Tool panels ------------------------------------------------ */
 .tool-panel {
-    tint: $primary 3%;
+    background: black;
 }
 .tool-panel.completed {
-    tint: $success 4%;
+    background: black;
 }
 .tool-panel.failed {
-    outline: solid $error;
+    background: black;
 }
 .tool-panel.running {
-    outline: solid $warning;
+    background: black;
 }
 
 /* -- Error panels ----------------------------------------------- */
 .error-panel {
-    outline: solid $error;
+    background: black;
+}
+
+.transcript-message {
+    width: 1fr;
+}
+
+.chat-separator {
+    width: 1fr;
+    background: black;
+    color: $text-muted;
+    padding: 0 1;
+    margin: 0;
+    border: none;
 }

@@ -50,6 +50,10 @@ class TaskState:
     model: str = ""
     result: Any = None
     messages: list[dict[str, Any]] = field(default_factory=list)
+    activity: str = ""
+    summary: str = ""
+    runtime_state: Any = None
+    run_task: Any = None
 
     # Progress
     tool_use_count: int = 0
@@ -122,3 +126,14 @@ class TaskRegistry:
         msgs = task.pending_messages
         task.pending_messages = []
         return msgs
+
+
+_registry: TaskRegistry | None = None
+
+
+def get_task_registry() -> TaskRegistry:
+    """Return the process-wide background task registry."""
+    global _registry
+    if _registry is None:
+        _registry = TaskRegistry()
+    return _registry
