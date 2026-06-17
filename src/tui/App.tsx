@@ -1,16 +1,30 @@
-import React, { useMemo, useState } from 'react'
+import React, { useMemo, useRef, useState } from 'react'
 import { Box, Text, useApp, useInput } from 'ink'
+import { runAgentTurn } from '../agent/loop.js'
+import { MockModelClient } from '../agent/mockModel.js'
+import type { AgentState } from '../agent/types.js'
+import { PermissionController } from '../permissions/controller.js'
+import type {
+  PermissionDecision as CorePermissionDecision,
+  PermissionRequest as CorePermissionRequest,
+} from '../permissions/types.js'
+import type { RuntimeEvent } from '../runtime/events.js'
 import { Footer } from './components/Footer.js'
 import { PermissionPrompt } from './components/PermissionPrompt.js'
 import { PromptInput } from './components/PromptInput.js'
 import { TaskBoard } from './components/TaskBoard.js'
 import { Transcript } from './components/Transcript.js'
-import { createInitialTranscript, nextAssistantReply } from './mockRuntime.js'
+import { createInitialTranscript } from './mockRuntime.js'
 import type { PermissionDecision, PermissionRequest, PromptMode, TaskItem, TranscriptItem } from './types.js'
 
 type AppProps = {
   args: string[]
   cwd: string
+}
+
+type PendingPermission = {
+  request: CorePermissionRequest
+  resolve: (decision: CorePermissionDecision) => void
 }
 
 export function App({ args, cwd }: AppProps) {
@@ -21,8 +35,19 @@ export function App({ args, cwd }: AppProps) {
   const [denyReason, setDenyReason] = useState('')
   const [collectingDenyReason, setCollectingDenyReason] = useState(false)
   const [view, setView] = useState<'chat' | 'tasks'>('chat')
+  const [processing, setProcessing] = useState(false)
   const [tasks, setTasks] = useState<TaskItem[]>(() => createInitialTasks())
   const model = useMemo(() => resolveModel(args), [args])
+  const modelClient = useMemo(() => new MockModelClient(), [])
+  const permissionController = useMemo(() => new PermissionController('default'), [])
+  const agentState = useRef<AgentState>({
+    sessionId: crypto.randomUUID(),
+    messages: [],
+    turnCount: 0,
+    cwd,
+    model,
+  })
+  const pendingPermission = useRef<PendingPermission | undefined>(undefined)
 
   useInput((input, key) => {
     if (permission) {
@@ -52,9 +77,9 @@ export function App({ args, cwd }: AppProps) {
     }
   })
 
-  function submit(text: string, mode: PromptMode) {
+  async function submit(text: string, mode: PromptMode) {
     const trimmed = text.trim()
-    if (!trimmed) return
+    if (!trimmed || processing) return
 
     if (trimmed === '/exit' || trimmed === '/quit') {
       exit()
@@ -74,27 +99,85 @@ export function App({ args, cwd }: AppProps) {
       return
     }
 
-    if (mode === 'bash') {
-      const request = createPermissionRequest(trimmed)
+    setProcessing(true)
+    try {
+      for await (const event of runAgentTurn({
+        state: agentState.current,
+        request: {
+          id: crypto.randomUUID(),
+          mode: mode === 'bash' ? 'bash' : mode === 'command' ? 'command' : 'prompt',
+          text: trimmed,
+          createdAt: Date.now(),
+        },
+        modelClient,
+        permissionController,
+        async decidePermission(permissionEvent) {
+          return await waitForPermission(permissionEvent.request)
+        },
+      })) {
+        applyRuntimeEvent(event)
+      }
+    } catch (error) {
       setItems(prev => [
         ...prev,
-        { type: 'user', id: crypto.randomUUID(), text: `!${trimmed}` },
+        {
+          type: 'error',
+          id: crypto.randomUUID(),
+          text: error instanceof Error ? error.message : String(error),
+        },
+      ])
+    } finally {
+      setProcessing(false)
+    }
+  }
+
+  function waitForPermission(request: CorePermissionRequest) {
+    setPermission(toTuiPermissionRequest(request))
+    return new Promise<CorePermissionDecision>(resolve => {
+      pendingPermission.current = { request, resolve }
+    })
+  }
+
+  function applyRuntimeEvent(event: RuntimeEvent) {
+    if (event.type === 'assistant_delta') {
+      appendAssistantDelta(event.messageId, event.text)
+    } else if (event.type === 'tool_call_started') {
+      setItems(prev => [
+        ...prev,
         {
           type: 'tool_summary',
           id: crypto.randomUUID(),
-          text: `Running ${trimmed}`,
-          status: 'pending',
+          text: `Running ${event.call.name}`,
+          status: 'running',
         },
       ])
-      setPermission(request)
-      return
+    } else if (event.type === 'tool_call_finished') {
+      setItems(prev => [
+        ...prev,
+        {
+          type: event.result.ok ? 'tool_summary' : 'error',
+          id: crypto.randomUUID(),
+          text: event.result.ok ? summarizeToolResult(event.result.content) : event.result.error ?? event.result.content,
+          status: event.result.ok ? 'completed' : undefined as never,
+        },
+      ])
+    } else if (event.type === 'error') {
+      setItems(prev => [...prev, { type: 'error', id: crypto.randomUUID(), text: event.error }])
     }
+  }
 
-    setItems(prev => [
-      ...prev,
-      { type: 'user', id: crypto.randomUUID(), text: trimmed },
-      nextAssistantReply(trimmed, mode),
-    ])
+  function appendAssistantDelta(messageId: string, text: string) {
+    setItems(prev => {
+      const existing = prev.find(item => item.type === 'assistant' && item.id === messageId)
+      if (!existing) {
+        return [...prev, { type: 'assistant', id: messageId, text }]
+      }
+      return prev.map(item =>
+        item.type === 'assistant' && item.id === messageId
+          ? { ...item, text: item.text + text }
+          : item,
+      )
+    })
   }
 
   function handlePermissionInput(
@@ -133,7 +216,9 @@ export function App({ args, cwd }: AppProps) {
   }
 
   function resolvePermission(decision: PermissionDecision) {
-    if (!permission) return
+    if (!permission || !pendingPermission.current) return
+    const pending = pendingPermission.current
+    const coreDecision = toCorePermissionDecision(decision, pending.request)
     const summary =
       decision.type === 'deny'
         ? `Denied ${permission.toolName}${decision.reason ? `: ${decision.reason}` : ''}`
@@ -150,6 +235,8 @@ export function App({ args, cwd }: AppProps) {
     setPermission(undefined)
     setDenyReason('')
     setCollectingDenyReason(false)
+    pendingPermission.current = undefined
+    pending.resolve(coreDecision)
   }
 
   if (view === 'tasks') {
@@ -175,7 +262,7 @@ export function App({ args, cwd }: AppProps) {
         />
       ) : null}
       <PromptInput
-        disabled={Boolean(permission)}
+        disabled={Boolean(permission) || processing}
         mode={inputMode}
         onModeChange={setInputMode}
         onSubmit={submit}
@@ -190,18 +277,48 @@ function resolveModel(args: string[]) {
   if (modelIndex >= 0 && args[modelIndex + 1]) {
     return args[modelIndex + 1]
   }
-  return process.env.ANTHROPIC_MODEL ?? process.env.GENERAL_AGENT_MODEL ?? 'model-not-set'
+  return process.env.ANTHROPIC_MODEL ?? process.env.GENERAL_AGENT_MODEL ?? 'mock'
 }
 
-function createPermissionRequest(command: string): PermissionRequest {
-  const prefixRule = command.split(/\s+/).slice(0, 2).join(' ') || command
+function toTuiPermissionRequest(request: CorePermissionRequest): PermissionRequest {
+  const command = request.preview.type === 'command'
+    ? request.preview.command
+    : request.preview.type === 'file'
+      ? request.preview.path
+      : request.preview.pattern
   return {
-    id: crypto.randomUUID(),
-    toolName: 'Bash',
+    id: request.id,
+    toolName: request.toolName,
     command,
-    reason: 'This is a preview approval flow for shell commands.',
-    prefixRule,
+    reason: request.check.type === 'ask' ? request.check.reason : 'Allow this tool call?',
+    prefixRule: request.suggestions[0]?.pattern ?? command,
   }
+}
+
+function toCorePermissionDecision(
+  decision: PermissionDecision,
+  request: CorePermissionRequest,
+): CorePermissionDecision {
+  if (decision.type === 'deny') return decision
+  if (!decision.remember) return { type: 'allow', remember: false }
+  return {
+    type: 'allow',
+    remember: true,
+    rule: request.suggestions[0] ?? {
+      id: crypto.randomUUID(),
+      scope: 'session',
+      toolName: request.toolName,
+      pattern: '*',
+      behavior: 'allow',
+    },
+  }
+}
+
+function summarizeToolResult(content: string) {
+  const clean = content.trim()
+  if (!clean) return 'Tool completed'
+  const firstLine = clean.split(/\r?\n/)[0] ?? clean
+  return firstLine.length > 160 ? `${firstLine.slice(0, 157)}...` : firstLine
 }
 
 function createInitialTasks(): TaskItem[] {
