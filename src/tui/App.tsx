@@ -42,6 +42,8 @@ export function App({ args, cwd }: AppProps) {
   const [denyReason, setDenyReason] = useState('')
   const [collectingDenyReason, setCollectingDenyReason] = useState(false)
   const [view, setView] = useState<'chat' | 'tasks'>('chat')
+  const [selectedTaskId, setSelectedTaskId] = useState<string | undefined>()
+  const [detailTaskId, setDetailTaskId] = useState<string | undefined>()
   const [processing, setProcessing] = useState(false)
   const [sessionReady, setSessionReady] = useState(false)
   const taskRegistry = useMemo(() => createInitialTaskRegistry(), [])
@@ -100,22 +102,69 @@ export function App({ args, cwd }: AppProps) {
 
     if (key.leftArrow) {
       setView('tasks')
+      setSelectedTaskId(prev => prev ?? taskRegistry.list()[0]?.id)
       return
     }
     if (key.rightArrow) {
       setView('chat')
+      setDetailTaskId(undefined)
       return
     }
-    if (view === 'tasks' && input.toLowerCase() === 'n') {
-      taskRegistry.create({
-        type: 'manual',
-        title: 'New mock task',
-        activity: 'Waiting for instructions',
-        status: 'awaiting_input',
-      })
-      setTasks(taskItemsFromRegistry(taskRegistry))
+
+    if (view === 'tasks') {
+      if (key.escape) {
+        setDetailTaskId(undefined)
+        return
+      }
+      if (key.upArrow || key.downArrow) {
+        moveTaskSelection(key.downArrow ? 1 : -1)
+        return
+      }
+      if (key.return && selectedTaskId) {
+        setDetailTaskId(selectedTaskId)
+        return
+      }
+      if (input.toLowerCase() === 'n') {
+        const task = taskRegistry.create({
+          type: 'manual',
+          title: 'Manual task',
+          activity: 'Awaiting input',
+          status: 'awaiting_input',
+        })
+        void sessionStore.append(agentState.current.sessionId, {
+          type: 'task_state',
+          task: toTaskItem(task),
+        })
+        setSelectedTaskId(task.id)
+        setTasks(taskItemsFromRegistry(taskRegistry))
+        return
+      }
+      if (input.toLowerCase() === 'c' && selectedTaskId) {
+        const updated = taskRegistry.update(selectedTaskId, {
+          status: 'cancelled',
+          activity: 'Cancelled by user',
+        })
+        if (updated) {
+          void sessionStore.append(agentState.current.sessionId, {
+            type: 'task_state',
+            task: toTaskItem(updated),
+          })
+        }
+        setTasks(taskItemsFromRegistry(taskRegistry))
+      }
     }
   })
+
+  function moveTaskSelection(offset: number) {
+    const allTasks = taskRegistry.list()
+    if (allTasks.length === 0) {
+      setSelectedTaskId(undefined)
+      return
+    }
+    const currentIndex = Math.max(0, allTasks.findIndex(task => task.id === selectedTaskId))
+    const nextIndex = (currentIndex + offset + allTasks.length) % allTasks.length
+    setSelectedTaskId(allTasks[nextIndex]?.id)
+  }
 
   async function submit(text: string, mode: PromptMode) {
     const trimmed = text.trim()
@@ -348,7 +397,16 @@ export function App({ args, cwd }: AppProps) {
   }
 
   if (view === 'tasks') {
-    return <TaskBoard tasks={tasks} cwd={cwd} model={model} provider={config.providerLabel} />
+    return (
+      <TaskBoard
+        tasks={tasks}
+        cwd={cwd}
+        model={model}
+        provider={config.providerLabel}
+        selectedId={selectedTaskId}
+        detailId={detailTaskId}
+      />
+    )
   }
 
   return (
@@ -451,13 +509,19 @@ function createInitialTaskRegistry() {
 }
 
 function taskItemsFromRegistry(registry: TaskRegistry): TaskItem[] {
-  return registry.list().map(task => ({
+  return registry.list().map(toTaskItem)
+}
+
+function toTaskItem(task: TaskState): TaskItem {
+  return {
     id: task.id,
     status: toTuiTaskStatus(task),
     title: task.title,
     activity: task.activity,
+    messages: task.messages.length,
+    output: task.output,
     age: formatAge(task.updatedAt),
-  }))
+  }
 }
 
 function toTuiTaskStatus(task: TaskState): TaskItem['status'] {

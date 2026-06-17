@@ -22,6 +22,8 @@ export type TaskItem = {
   status: TaskStatus
   title: string
   activity: string
+  messages: number
+  output?: string
   age: string
 }
 

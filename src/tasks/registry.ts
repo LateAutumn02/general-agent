@@ -11,6 +11,8 @@ export class TaskRegistry {
       status: input.status ?? 'running',
       title: input.title,
       activity: input.activity ?? 'Starting',
+      messages: input.messages ?? [],
+      output: input.output,
       createdAt: now,
       updatedAt: now,
     }
@@ -32,6 +34,16 @@ export class TaskRegistry {
 
   list() {
     return [...this.tasks.values()].sort((a, b) => b.updatedAt - a.updatedAt)
+  }
+
+  delete(id: string) {
+    return this.tasks.delete(id)
+  }
+
+  appendMessage(id: string, message: TaskState['messages'][number]) {
+    const current = this.tasks.get(id)
+    if (!current) return undefined
+    return this.update(id, { messages: [...current.messages, message] })
   }
 
   counts() {
