@@ -7,6 +7,7 @@ import { createModelClient } from '../api/modelFactory.js'
 import { compactMessages } from '../compact/compact.js'
 import { loadRuntimeConfig } from '../config/runtimeConfig.js'
 import { PermissionController } from '../permissions/controller.js'
+import { loadMemory } from '../memory/store.js'
 import type {
   PermissionDecision as CorePermissionDecision,
   PermissionRequest as CorePermissionRequest,
@@ -14,6 +15,7 @@ import type {
 import type { RuntimeEvent } from '../runtime/events.js'
 import { JsonlSessionStore } from '../session/store.js'
 import type { ChatMessage } from '../session/types.js'
+import { loadDefaultSkills } from '../skills/loader.js'
 import { TaskRegistry } from '../tasks/registry.js'
 import type { TaskState } from '../tasks/types.js'
 import { Footer } from './components/Footer.js'
@@ -182,9 +184,23 @@ export function App({ args, cwd }: AppProps) {
         {
           type: 'assistant',
           id: crypto.randomUUID(),
-          text: 'Available now: type normally, prefix with ! for bash mode, use /help, /exit, or /quit.',
+          text: 'Available now: type normally, use /memory, /skills, /compact, /resume, /exit, or prefix ! as a shell shortcut.',
         },
       ])
+      return
+    }
+
+    if (trimmed === '/memory' || trimmed.startsWith('/memory ')) {
+      await handleMemoryCommand(trimmed)
+      return
+    }
+
+    if (trimmed === '/skills') {
+      await handleSkillsCommand(trimmed)
+      return
+    }
+
+    if (trimmed.startsWith('/') && await maybeHandleSkillCommand(trimmed)) {
       return
     }
 
@@ -205,7 +221,7 @@ export function App({ args, cwd }: AppProps) {
         {
           type: 'tool_summary',
           id: crypto.randomUUID(),
-          text: `Compacted ${result.removedMessageIds.length} messages`,
+          text: `Compacted ${result.removedMessageIds.length} messages · ${result.beforeCharacters} -> ${result.afterCharacters} chars`,
           status: 'completed',
         },
       ])
@@ -248,6 +264,66 @@ export function App({ args, cwd }: AppProps) {
     } finally {
       setProcessing(false)
     }
+  }
+
+  async function handleMemoryCommand(command: string) {
+    const memory = await loadMemory(cwd)
+    const files = memory.files.map(file => `- ${file.path} (${file.content.length} chars)`)
+    setItems(prev => [
+      ...prev,
+      { type: 'user', id: crypto.randomUUID(), text: command },
+      {
+        type: 'tool_summary',
+        id: crypto.randomUUID(),
+        text: files.length > 0
+          ? `Loaded memory files:\n${files.join('\n')}`
+          : 'No memory files found. Create MEMORY.md or .general-agent/MEMORY.md to add project memory.',
+        status: 'completed',
+      },
+    ])
+  }
+
+  async function handleSkillsCommand(command: string) {
+    const skills = await loadDefaultSkills(cwd)
+    setItems(prev => [
+      ...prev,
+      { type: 'user', id: crypto.randomUUID(), text: command },
+      {
+        type: 'tool_summary',
+        id: crypto.randomUUID(),
+        text: skills.length > 0
+          ? `Available skills:\n${skills.map(skill => `- /${skill.name}: ${skill.description}`).join('\n')}`
+          : 'No skills found under skills/ or .general-agent/skills/.',
+        status: 'completed',
+      },
+    ])
+  }
+
+  async function maybeHandleSkillCommand(command: string) {
+    const name = command.slice(1).split(/\s+/, 1)[0]
+    if (!name) return false
+    const skills = await loadDefaultSkills(cwd)
+    const skill = skills.find(candidate => candidate.name === name)
+    if (!skill) return false
+    const message: ChatMessage = {
+      id: crypto.randomUUID(),
+      role: 'system',
+      text: `Skill activated: ${skill.name}\n${skill.content}`,
+      createdAt: Date.now(),
+    }
+    agentState.current.messages.push(message)
+    await sessionStore.append(agentState.current.sessionId, { type: 'message', message })
+    setItems(prev => [
+      ...prev,
+      { type: 'user', id: crypto.randomUUID(), text: command },
+      {
+        type: 'tool_summary',
+        id: crypto.randomUUID(),
+        text: `Activated skill ${skill.name}: ${skill.description}`,
+        status: 'completed',
+      },
+    ])
+    return true
   }
 
   async function handleResumeCommand(command: string) {

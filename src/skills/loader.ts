@@ -5,6 +5,7 @@ export type SkillManifest = {
   name: string
   description: string
   path: string
+  content: string
 }
 
 export async function loadSkills(root: string): Promise<SkillManifest[]> {
@@ -23,6 +24,7 @@ export async function loadSkills(root: string): Promise<SkillManifest[]> {
         name: entry,
         description: firstDescription(text) ?? entry,
         path,
+        content: text,
       })
     } catch {
       // Ignore malformed skill folders in the preview loader.
