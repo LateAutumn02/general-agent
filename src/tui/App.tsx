@@ -16,6 +16,8 @@ import type { RuntimeEvent } from '../runtime/events.js'
 import { JsonlSessionStore } from '../session/store.js'
 import type { ChatMessage } from '../session/types.js'
 import { loadDefaultSkills } from '../skills/loader.js'
+import { MultiAgentManager } from '../multi-agent/manager.js'
+import { createSwarmPlanFromGoal } from '../swarm/planner.js'
 import { TaskRegistry } from '../tasks/registry.js'
 import type { TaskState } from '../tasks/types.js'
 import { Footer } from './components/Footer.js'
@@ -209,6 +211,11 @@ export function App({ args, cwd }: AppProps) {
       return
     }
 
+    if (trimmed.startsWith('/swarm ')) {
+      await handleSwarmCommand(trimmed)
+      return
+    }
+
     if (trimmed === '/compact') {
       const result = compactMessages({
         messages: agentState.current.messages,
@@ -264,6 +271,37 @@ export function App({ args, cwd }: AppProps) {
     } finally {
       setProcessing(false)
     }
+  }
+
+  async function handleSwarmCommand(command: string) {
+    const goal = command.slice('/swarm '.length).trim()
+    if (!goal) return
+    const plan = createSwarmPlanFromGoal(goal)
+    const manager = new MultiAgentManager(taskRegistry)
+    const agentTasks = plan.members.map(member => manager.createAgentTask({
+      description: `${member.profile.name}: ${goal}`,
+      prompt: member.prompt,
+      profile: member.profile.name,
+      allowedTools: member.profile.allowedTools,
+    }, agentState.current.sessionId))
+    for (const task of agentTasks) {
+      await sessionStore.append(agentState.current.sessionId, {
+        type: 'task_state',
+        task: toTaskItem(task),
+      })
+    }
+    setSelectedTaskId(agentTasks[0]?.id)
+    setTasks(taskItemsFromRegistry(taskRegistry))
+    setItems(prev => [
+      ...prev,
+      { type: 'user', id: crypto.randomUUID(), text: command },
+      {
+        type: 'tool_summary',
+        id: crypto.randomUUID(),
+        text: `Created swarm plan for "${goal}":\n${agentTasks.map(task => `- ${task.profile.name}: ${task.prompt}`).join('\n')}`,
+        status: 'completed',
+      },
+    ])
   }
 
   async function handleMemoryCommand(command: string) {

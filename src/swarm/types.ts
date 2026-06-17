@@ -7,6 +7,7 @@ export type SwarmMember = {
   id: string
   name: string
   profile: AgentProfile
+  prompt: string
   taskId?: string
   status: TaskStatus
 }
