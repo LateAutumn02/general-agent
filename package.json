@@ -9,6 +9,8 @@
   "scripts": {
     "start": "bun run ./src/cli/main.tsx",
     "dev": "bun run ./src/cli/main.tsx",
+    "smoke:permissions": "bun run ./src/permissions/smoke.ts",
+    "smoke:session": "bun run ./src/session/smoke.ts",
     "smoke:tools": "bun run ./src/tools/smoke.ts",
     "typecheck": "tsc --noEmit"
   },
