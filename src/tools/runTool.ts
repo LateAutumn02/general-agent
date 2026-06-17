@@ -1,11 +1,12 @@
-import type { ToolContext, ToolDefinition, ToolResult } from './types.js'
+import type { ToolCall, ToolContext, ToolDefinition, ToolResult } from './types.js'
 
 export async function runTool<TInput>(
   tool: ToolDefinition<TInput>,
   input: TInput,
   context: ToolContext,
+  existingCall?: ToolCall,
 ): Promise<ToolResult> {
-  const call = {
+  const call = existingCall ?? {
     id: crypto.randomUUID(),
     name: tool.name,
     input,
