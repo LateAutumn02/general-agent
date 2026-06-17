@@ -1,5 +1,6 @@
 import type { ChatMessage } from '../session/types.js'
 import type { ToolCall } from '../tools/types.js'
+import type { ToolDefinition } from '../tools/types.js'
 
 export type AgentState = {
   sessionId: string
@@ -20,6 +21,7 @@ export type ModelRequest = {
   model: string
   messages: ChatMessage[]
   cwd: string
+  tools?: ToolDefinition[]
 }
 
 export type ModelStreamEvent =

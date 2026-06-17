@@ -20,7 +20,7 @@ export function Footer({ cwd, model, provider, mode }: FooterProps) {
       <Text color={theme.cwd}>{cwd}</Text>
       <Text color="gray">  </Text>
       <Text color={mode === 'bash' ? theme.bash : theme.muted}>
-        {mode === 'bash' ? '! bash mode' : '! for bash mode'}
+        {mode === 'bash' ? 'shell shortcut' : '! shell shortcut'}
       </Text>
     </Box>
   )

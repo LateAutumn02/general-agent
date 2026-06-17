@@ -41,9 +41,6 @@ export async function* runAgentTurn(options: RunTurnOptions): AsyncIterable<Runt
   state.messages.push(userMessage)
   await sessionStore?.append(state.sessionId, { type: 'message', message: userMessage })
 
-  let assistantText = ''
-  const assistantId = crypto.randomUUID()
-
   if (request.mode === 'bash') {
     yield* executeToolCall({
       call: {
@@ -64,40 +61,49 @@ export async function* runAgentTurn(options: RunTurnOptions): AsyncIterable<Runt
     return
   }
 
-  for await (const event of modelClient.stream({
-    model: state.model,
-    messages: state.messages,
-    cwd: state.cwd,
-  }, signal)) {
-    if (event.type === 'text_delta') {
-      assistantText += event.text
-      yield { type: 'assistant_delta', text: event.text, messageId: assistantId }
-      continue
+  for (let step = 0; step < 5; step += 1) {
+    let assistantText = ''
+    const assistantId = crypto.randomUUID()
+    let usedTool = false
+
+    for await (const event of modelClient.stream({
+      model: state.model,
+      messages: state.messages,
+      cwd: state.cwd,
+      tools: toolRegistry.list(),
+    }, signal)) {
+      if (event.type === 'text_delta') {
+        assistantText += event.text
+        yield { type: 'assistant_delta', text: event.text, messageId: assistantId }
+        continue
+      }
+
+      if (event.type === 'tool_use') {
+        usedTool = true
+        yield* executeToolCall({
+          call: event.call,
+          state,
+          toolRegistry,
+          permissionController,
+          sessionStore,
+          signal,
+          decidePermission: options.decidePermission,
+        })
+      }
     }
 
-    if (event.type === 'tool_use') {
-      yield* executeToolCall({
-        call: event.call,
-        state,
-        toolRegistry,
-        permissionController,
-        sessionStore,
-        signal,
-        decidePermission: options.decidePermission,
-      })
+    if (assistantText) {
+      const assistantMessage: ChatMessage = {
+        id: assistantId,
+        role: 'assistant',
+        text: assistantText,
+        createdAt: Date.now(),
+      }
+      state.messages.push(assistantMessage)
+      await sessionStore?.append(state.sessionId, { type: 'message', message: assistantMessage })
+      yield { type: 'assistant_done', text: assistantText, messageId: assistantId }
     }
-  }
-
-  if (assistantText) {
-    const assistantMessage: ChatMessage = {
-      id: assistantId,
-      role: 'assistant',
-      text: assistantText,
-      createdAt: Date.now(),
-    }
-    state.messages.push(assistantMessage)
-    await sessionStore?.append(state.sessionId, { type: 'message', message: assistantMessage })
-    yield { type: 'assistant_done', text: assistantText, messageId: assistantId }
+    if (!usedTool) break
   }
   state.turnCount += 1
 }
@@ -164,6 +170,14 @@ async function* executeToolCall(options: ExecuteToolCallOptions): AsyncIterable<
     emit: () => {},
   }, { ...call, status: 'running' })
   yield { type: 'tool_call_finished', callId: call.id, result }
+  const toolMessage: ChatMessage = {
+    id: crypto.randomUUID(),
+    role: 'tool',
+    text: `${call.name} result:\n${result.content}`,
+    createdAt: Date.now(),
+  }
+  state.messages.push(toolMessage)
+  await sessionStore?.append(state.sessionId, { type: 'message', message: toolMessage })
   await sessionStore?.append(state.sessionId, {
     type: 'runtime_event',
     event: { type: 'tool_call_finished', callId: call.id, result },

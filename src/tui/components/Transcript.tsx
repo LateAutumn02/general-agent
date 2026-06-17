@@ -2,6 +2,7 @@ import React from 'react'
 import { Box, Text } from 'ink'
 import type { TranscriptItem } from '../types.js'
 import { theme } from '../theme.js'
+import { MarkdownText } from './MarkdownText.js'
 
 type TranscriptProps = {
   items: TranscriptItem[]
@@ -52,7 +53,7 @@ function MessageRow({
   return (
     <Box>
       <Box width={2}><Text color={bulletColor}>{'\u2022'}</Text></Box>
-      <Box flexGrow={1}><Text color={textColor} wrap="wrap">{text}</Text></Box>
+      <Box flexGrow={1}><MarkdownText text={text} color={textColor} /></Box>
     </Box>
   )
 }
