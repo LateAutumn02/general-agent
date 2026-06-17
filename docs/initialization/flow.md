@@ -1,0 +1,31 @@
+# 启动初始化流程
+
+> 最后更新：2026-06-17 | 参考：legacy/python/docs/initialization, reference/cc-haha/bin/claude-haha
+
+## 阶段1：入口选择
+
+1. **bin 脚本启动** - `bin/general-agent` 定位项目根目录并传递调用者 cwd。
+2. **Bun 入口执行** - `src/cli/main.ts` 解析参数并选择运行模式。
+3. **环境文件加载** - 默认读取 `.env`，同时允许 `--env-file` 或测试环境禁用 dotenv。
+
+## 阶段2：配置合并
+
+1. **读取环境变量** - API key、base URL、默认模型和超时设置从环境变量读取。
+2. **读取用户配置** - 用户级设置决定默认模型、主题、权限模式和工具偏好。
+3. **读取项目配置** - 项目级设置决定工作目录、允许目录和 MCP 配置。
+4. **应用命令行覆盖** - CLI 参数优先级最高。
+
+## 阶段3：依赖初始化
+
+1. **创建模型客户端** - 根据 provider 选择 Anthropic 兼容、OpenAI 兼容或自定义客户端。
+2. **注册工具** - 按当前平台和权限模式过滤 Bash、PowerShell、Read、Edit 等工具。
+3. **打开会话仓库** - 创建或恢复 session id，准备 JSONL 追加写入。
+4. **创建 TUI 状态** - 构造初始 transcript、输入模式、footer 信息和任务注册表。
+
+## v1 简化流程
+
+1. 只支持 Bun 入口。
+2. 配置先使用 `.env` + CLI 参数。
+3. 用户配置文件后置实现。
+4. MCP 延后到独立阶段。
+

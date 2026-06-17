@@ -49,3 +49,9 @@ legacy/
 ## Legacy Policy
 
 The archived Python implementation is read-only unless a fix is needed to help migration. New work should not extend `legacy/python/`.
+
+## Document Migration
+
+The TypeScript documentation has been rewritten under `docs/`. The old Python documentation remains under `legacy/python/docs/`.
+
+See `docs/refactor/document-map.md` for the old-to-new module mapping.
