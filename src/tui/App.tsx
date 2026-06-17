@@ -36,7 +36,6 @@ type PendingPermission = {
 
 export function App({ args, cwd }: AppProps) {
   const { exit } = useApp()
-  const [items, setItems] = useState<TranscriptItem[]>(() => createInitialTranscript())
   const [inputMode, setInputMode] = useState<PromptMode>('prompt')
   const [permission, setPermission] = useState<PermissionRequest | undefined>()
   const [denyReason, setDenyReason] = useState('')
@@ -48,6 +47,7 @@ export function App({ args, cwd }: AppProps) {
   const [tasks, setTasks] = useState<TaskItem[]>(() => taskItemsFromRegistry(taskRegistry))
   const config = useMemo(() => loadRuntimeConfig(args, cwd), [args, cwd])
   const model = config.model
+  const [items, setItems] = useState<TranscriptItem[]>(() => createInitialTranscript(config.providerLabel, model))
   const modelClient = useMemo(() => createModelClient(config), [config])
   const permissionController = useMemo(() => new PermissionController(config.permissionMode), [config.permissionMode])
   const agentState = useRef<AgentState>({
@@ -87,7 +87,7 @@ export function App({ args, cwd }: AppProps) {
     return () => {
       cancelled = true
     }
-  }, [args, cwd, model, sessionStore])
+  }, [args, cwd, model, sessionStore, config.providerLabel])
 
   useInput((input, key) => {
     if (permission) {
@@ -328,7 +328,7 @@ export function App({ args, cwd }: AppProps) {
         onModeChange={setInputMode}
         onSubmit={submit}
       />
-      <Footer cwd={cwd} model={model} mode={inputMode} />
+      <Footer cwd={cwd} model={model} provider={config.providerLabel} mode={inputMode} />
     </Box>
   )
 }

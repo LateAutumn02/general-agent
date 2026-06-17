@@ -1,11 +1,21 @@
 import type { PromptMode, TranscriptItem } from './types.js'
 
-export function createInitialTranscript(): TranscriptItem[] {
+export function createInitialTranscript(providerLabel = 'mock', model = 'mock'): TranscriptItem[] {
+  if (providerLabel === 'mock') {
+    return [
+      {
+        type: 'error',
+        id: crypto.randomUUID(),
+        text: 'No model API key found. Set DEEPSEEK_API_KEY in .env or your shell environment.',
+      },
+    ]
+  }
   return [
     {
-      type: 'assistant',
+      type: 'tool_summary',
       id: crypto.randomUUID(),
-      text: 'Rewrite scaffold is ready. The next modules will replace this mock runtime with real tools and agent streaming.',
+      text: `Connected to ${providerLabel} · ${model}`,
+      status: 'completed',
     },
   ]
 }

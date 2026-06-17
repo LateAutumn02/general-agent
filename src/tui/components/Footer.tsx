@@ -6,12 +6,15 @@ import { theme } from '../theme.js'
 type FooterProps = {
   cwd: string
   model: string
+  provider: string
   mode: PromptMode
 }
 
-export function Footer({ cwd, model, mode }: FooterProps) {
+export function Footer({ cwd, model, provider, mode }: FooterProps) {
   return (
     <Box paddingX={1}>
+      <Text color={theme.model}>{provider}</Text>
+      <Text color="gray"> · </Text>
       <Text color={theme.model}>{model}</Text>
       <Text color="gray">  </Text>
       <Text color={theme.cwd}>{cwd}</Text>

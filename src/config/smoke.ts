@@ -9,6 +9,7 @@ process.env.DEEPSEEK_API_KEY = 'test-key'
 const deepseekConfig = loadRuntimeConfig([], process.cwd())
 if (deepseekConfig.provider !== 'openai-compatible') throw new Error('deepseek provider failed')
 if (deepseekConfig.model !== 'deepseek-v4-flash') throw new Error('deepseek model default failed')
+if (deepseekConfig.providerLabel !== 'deepseek') throw new Error('provider label failed')
 if (previousKey === undefined) {
   delete process.env.DEEPSEEK_API_KEY
 } else {
