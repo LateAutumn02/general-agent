@@ -15,10 +15,11 @@ export function PermissionPrompt({
   collectingDenyReason,
 }: PermissionPromptProps) {
   return (
-    <Box flexDirection="column" paddingX={1} paddingY={1}>
+    <Box flexDirection="column" paddingX={1} paddingY={1} backgroundColor={theme.inputBackground}>
       <Text backgroundColor={theme.inputBackground} color="white">
-        * Running {request.toolName}
+        {'\u2022'} Running {request.toolName}
       </Text>
+      <Text backgroundColor={theme.inputBackground}> </Text>
       <Text backgroundColor={theme.inputBackground} color="white">
         Would you like to run the following command?
       </Text>
@@ -28,8 +29,9 @@ export function PermissionPrompt({
       <Text backgroundColor={theme.inputBackground} color="white">
         $ {request.command}
       </Text>
+      <Text backgroundColor={theme.inputBackground}> </Text>
       <Text backgroundColor={theme.inputBackground} color={theme.inputText}>
-        1. Yes, proceed (y)
+        {'\u203a'} 1. Yes, proceed (y)
       </Text>
       <Text backgroundColor={theme.inputBackground} color={theme.inputText}>
         2. Yes, and don't ask again for commands that start with `{request.prefixRule}` (p)

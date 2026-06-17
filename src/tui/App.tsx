@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react'
 import { join } from 'node:path'
-import { Box, Text, useApp, useInput } from 'ink'
+import { Box, useApp, useInput } from 'ink'
 import { runAgentTurn } from '../agent/loop.js'
 import type { AgentState } from '../agent/types.js'
 import { createModelClient } from '../api/modelFactory.js'
@@ -17,6 +17,7 @@ import type { ChatMessage } from '../session/types.js'
 import { TaskRegistry } from '../tasks/registry.js'
 import type { TaskState } from '../tasks/types.js'
 import { Footer } from './components/Footer.js'
+import { Header } from './components/Header.js'
 import { PermissionPrompt } from './components/PermissionPrompt.js'
 import { PromptInput } from './components/PromptInput.js'
 import { TaskBoard } from './components/TaskBoard.js'
@@ -160,6 +161,7 @@ export function App({ args, cwd }: AppProps) {
     }
 
     setProcessing(true)
+    setItems(prev => [...prev, { type: 'user', id: crypto.randomUUID(), text: trimmed }])
     try {
       for await (const event of runAgentTurn({
         state: agentState.current,
@@ -301,17 +303,12 @@ export function App({ args, cwd }: AppProps) {
   }
 
   if (view === 'tasks') {
-    return <TaskBoard tasks={tasks} cwd={cwd} model={model} />
+    return <TaskBoard tasks={tasks} cwd={cwd} model={model} provider={config.providerLabel} />
   }
 
   return (
     <Box flexDirection="column" minHeight={18}>
-      <Box paddingX={1} paddingY={1}>
-        <Text color="cyan" bold>
-          general-agent
-        </Text>
-        <Text color="gray">  TypeScript rewrite preview</Text>
-      </Box>
+      <Header cwd={cwd} model={model} provider={config.providerLabel} />
       <Box flexDirection="column" flexGrow={1} paddingX={1}>
         <Transcript items={items} />
       </Box>

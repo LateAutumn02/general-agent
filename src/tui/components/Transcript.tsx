@@ -9,14 +9,11 @@ type TranscriptProps = {
 
 export function Transcript({ items }: TranscriptProps) {
   return (
-    <Box flexDirection="column">
-      {items.map((item, index) => (
-        <React.Fragment key={item.id}>
+    <Box flexDirection="column" paddingBottom={1}>
+      {items.map(item => (
+        <Box key={item.id} marginBottom={1}>
           <TranscriptRow item={item} />
-          {index < items.length - 1 ? (
-            <Text color={theme.separator}>{'\u2500'.repeat(37)}</Text>
-          ) : null}
-        </React.Fragment>
+        </Box>
       ))}
     </Box>
   )
@@ -24,16 +21,38 @@ export function Transcript({ items }: TranscriptProps) {
 
 function TranscriptRow({ item }: { item: TranscriptItem }) {
   if (item.type === 'user') {
-    return <Text color={theme.user}>{'\u203a'} {item.text}</Text>
+    return (
+      <Box>
+        <Box width={2}><Text color={theme.user}>{'\u203a'}</Text></Box>
+        <Box flexGrow={1}><Text color={theme.user} wrap="wrap">{item.text}</Text></Box>
+      </Box>
+    )
   }
 
   if (item.type === 'tool_summary') {
-    return <Text color={theme.muted}>{'\u2022'} {item.text}</Text>
+    return <MessageRow bulletColor={theme.muted} textColor={theme.muted} text={item.text} />
   }
 
   if (item.type === 'error') {
-    return <Text color={theme.error}>{'\u2022'} {item.text}</Text>
+    return <MessageRow bulletColor={theme.error} textColor={theme.error} text={item.text} />
   }
 
-  return <Text color={theme.assistant}>{'\u2022'} {item.text}</Text>
+  return <MessageRow bulletColor={theme.assistant} textColor={theme.assistant} text={item.text} />
+}
+
+function MessageRow({
+  bulletColor,
+  textColor,
+  text,
+}: {
+  bulletColor: string
+  textColor: string
+  text: string
+}) {
+  return (
+    <Box>
+      <Box width={2}><Text color={bulletColor}>{'\u2022'}</Text></Box>
+      <Box flexGrow={1}><Text color={textColor} wrap="wrap">{text}</Text></Box>
+    </Box>
+  )
 }

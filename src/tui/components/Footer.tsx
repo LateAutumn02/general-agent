@@ -12,7 +12,7 @@ type FooterProps = {
 
 export function Footer({ cwd, model, provider, mode }: FooterProps) {
   return (
-    <Box paddingX={1}>
+    <Box paddingX={1} backgroundColor={theme.inputBackground}>
       <Text color={theme.model}>{provider}</Text>
       <Text color="gray"> · </Text>
       <Text color={theme.model}>{model}</Text>

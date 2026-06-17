@@ -52,9 +52,12 @@ export function PromptInput({
   const displayValue = disabled ? 'waiting for tool approval' : value || placeholder
 
   return (
-    <Box paddingX={1} paddingY={0}>
+    <Box paddingX={1} backgroundColor={theme.inputBackground}>
+      <Text backgroundColor={theme.inputBackground} color={mode === 'bash' ? theme.bash : theme.user}>
+        {prompt}
+      </Text>
       <Text backgroundColor={theme.inputBackground} color={theme.inputText}>
-        {prompt} {displayValue}
+        {' '}{displayValue}
       </Text>
     </Box>
   )
