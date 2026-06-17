@@ -13,6 +13,8 @@ import type {
 import type { RuntimeEvent } from '../runtime/events.js'
 import { JsonlSessionStore } from '../session/store.js'
 import type { ChatMessage } from '../session/types.js'
+import { TaskRegistry } from '../tasks/registry.js'
+import type { TaskState } from '../tasks/types.js'
 import { Footer } from './components/Footer.js'
 import { PermissionPrompt } from './components/PermissionPrompt.js'
 import { PromptInput } from './components/PromptInput.js'
@@ -41,7 +43,8 @@ export function App({ args, cwd }: AppProps) {
   const [view, setView] = useState<'chat' | 'tasks'>('chat')
   const [processing, setProcessing] = useState(false)
   const [sessionReady, setSessionReady] = useState(false)
-  const [tasks, setTasks] = useState<TaskItem[]>(() => createInitialTasks())
+  const taskRegistry = useMemo(() => createInitialTaskRegistry(), [])
+  const [tasks, setTasks] = useState<TaskItem[]>(() => taskItemsFromRegistry(taskRegistry))
   const model = useMemo(() => resolveModel(args), [args])
   const modelClient = useMemo(() => new MockModelClient(), [])
   const permissionController = useMemo(() => new PermissionController('default'), [])
@@ -99,16 +102,13 @@ export function App({ args, cwd }: AppProps) {
       return
     }
     if (view === 'tasks' && input.toLowerCase() === 'n') {
-      setTasks(prev => [
-        {
-          id: crypto.randomUUID(),
-          status: 'awaiting_input',
-          title: 'New mock task',
-          activity: 'Waiting for instructions',
-          age: '0s',
-        },
-        ...prev,
-      ])
+      taskRegistry.create({
+        type: 'manual',
+        title: 'New mock task',
+        activity: 'Waiting for instructions',
+        status: 'awaiting_input',
+      })
+      setTasks(taskItemsFromRegistry(taskRegistry))
     }
   })
 
@@ -396,21 +396,44 @@ function transcriptFromMessages(messages: ChatMessage[]): TranscriptItem[] {
   })
 }
 
-function createInitialTasks(): TaskItem[] {
-  return [
-    {
-      id: crypto.randomUUID(),
-      status: 'awaiting_input',
-      title: 'Review TUI approval flow',
-      activity: 'Permission mock is waiting for input',
-      age: '1m',
-    },
-    {
-      id: crypto.randomUUID(),
-      status: 'completed',
-      title: 'Archive Python implementation',
-      activity: 'Moved to legacy/python',
-      age: 'done',
-    },
-  ]
+function createInitialTaskRegistry() {
+  const registry = new TaskRegistry()
+  registry.create({
+    type: 'manual',
+    title: 'Review TUI approval flow',
+    activity: 'Permission flow is connected to runtime',
+    status: 'awaiting_input',
+  })
+  const archive = registry.create({
+    type: 'manual',
+    title: 'Archive Python implementation',
+    activity: 'Moved to legacy/python',
+    status: 'running',
+  })
+  registry.update(archive.id, { status: 'completed' })
+  return registry
+}
+
+function taskItemsFromRegistry(registry: TaskRegistry): TaskItem[] {
+  return registry.list().map(task => ({
+    id: task.id,
+    status: toTuiTaskStatus(task),
+    title: task.title,
+    activity: task.activity,
+    age: formatAge(task.updatedAt),
+  }))
+}
+
+function toTuiTaskStatus(task: TaskState): TaskItem['status'] {
+  if (task.status === 'awaiting_input') return 'awaiting_input'
+  if (task.status === 'completed') return 'completed'
+  return 'running'
+}
+
+function formatAge(timestamp: number) {
+  const seconds = Math.max(0, Math.floor((Date.now() - timestamp) / 1000))
+  if (seconds < 60) return `${seconds}s`
+  const minutes = Math.floor(seconds / 60)
+  if (minutes < 60) return `${minutes}m`
+  return `${Math.floor(minutes / 60)}h`
 }
