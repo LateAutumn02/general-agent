@@ -4,12 +4,18 @@ import type { PromptMode } from '../types.js'
 import { theme } from '../theme.js'
 
 type PromptInputProps = {
+  disabled?: boolean
   mode: PromptMode
   onModeChange: (mode: PromptMode) => void
   onSubmit: (value: string, mode: PromptMode) => void
 }
 
-export function PromptInput({ mode, onModeChange, onSubmit }: PromptInputProps) {
+export function PromptInput({
+  disabled = false,
+  mode,
+  onModeChange,
+  onSubmit,
+}: PromptInputProps) {
   const [value, setValue] = useState('')
 
   useEffect(() => {
@@ -20,6 +26,7 @@ export function PromptInput({ mode, onModeChange, onSubmit }: PromptInputProps) 
   }, [onModeChange, value])
 
   useInput((input, key) => {
+    if (disabled) return
     if (key.return) {
       onSubmit(value, mode)
       setValue('')
@@ -40,13 +47,14 @@ export function PromptInput({ mode, onModeChange, onSubmit }: PromptInputProps) 
     }
   })
 
-  const prompt = mode === 'bash' ? '$' : '›'
+  const prompt = mode === 'bash' ? '$' : '\u203a'
   const placeholder = mode === 'bash' ? 'shell command' : 'Ask general-agent'
+  const displayValue = disabled ? 'waiting for tool approval' : value || placeholder
 
   return (
     <Box paddingX={1} paddingY={0}>
       <Text backgroundColor={theme.inputBackground} color={theme.inputText}>
-        {prompt} {value || placeholder}
+        {prompt} {displayValue}
       </Text>
     </Box>
   )
