@@ -21,10 +21,8 @@ export const bashTool: ToolDefinition<BashInput> = {
     }
   },
   async execute(input, context, call) {
-    const shell = process.platform === 'win32'
-      ? ['powershell.exe', '-NoProfile', '-Command', input.command]
-      : ['bash', '-lc', input.command]
-    const proc = Bun.spawn(shell, {
+    const shell = await resolveShell(input.command)
+    const proc = Bun.spawn(shell.command, {
       cwd: context.cwd,
       stdout: 'pipe',
       stderr: 'pipe',
@@ -48,4 +46,28 @@ export const bashTool: ToolDefinition<BashInput> = {
     if (!result) return `Running ${input.command}`
     return result.ok ? `Ran ${input.command}` : `Command failed: ${input.command}`
   },
+}
+
+async function resolveShell(command: string) {
+  if (process.platform !== 'win32') {
+    return { command: ['bash', '-lc', command] }
+  }
+  if (await commandExists('bash')) {
+    return { command: ['bash', '-lc', command] }
+  }
+  return {
+    command: ['powershell.exe', '-NoProfile', '-Command', toPowerShellCompatible(command)],
+  }
+}
+
+async function commandExists(command: string) {
+  const proc = Bun.spawn(['where.exe', command], {
+    stdout: 'ignore',
+    stderr: 'ignore',
+  })
+  return await proc.exited === 0
+}
+
+function toPowerShellCompatible(command: string) {
+  return command.replace(/\s+&&\s+/g, '; ')
 }

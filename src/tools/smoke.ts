@@ -35,7 +35,7 @@ await runTool(edit, { path: 'note.txt', oldText: 'world', newText: 'agent' }, co
 const readResult = await runTool(read, { path: 'note.txt' }, context)
 const globResult = await runTool(glob, { pattern: '*.txt' }, context)
 const grepResult = await runTool(grep, { pattern: 'agent' }, context)
-const bashResult = await runTool(bash, { command: 'echo smoke' }, context)
+const bashResult = await runTool(bash, { command: 'echo smoke && pwd' }, context)
 const invalidResult = await runTool(read, { path: 42 }, context)
 const powerShellResult = powerShell
   ? await runTool(powerShell, { command: 'Write-Output smoke' }, context)

@@ -64,7 +64,8 @@ export async function* runAgentTurn(options: RunTurnOptions): AsyncIterable<Runt
     return
   }
 
-  for (let step = 0; step < 5; step += 1) {
+  const maxModelSteps = 12
+  for (let step = 0; step < maxModelSteps; step += 1) {
     let assistantText = ''
     const assistantId = crypto.randomUUID()
     const pendingToolCalls: ToolCall[] = []
@@ -113,6 +114,12 @@ export async function* runAgentTurn(options: RunTurnOptions): AsyncIterable<Runt
     }
 
     if (pendingToolCalls.length === 0) break
+    if (step === maxModelSteps - 1) {
+      yield {
+        type: 'error',
+        error: `Stopped after ${maxModelSteps} tool rounds to avoid an infinite loop. Please ask me to continue if more work is needed.`,
+      }
+    }
   }
   state.turnCount += 1
 }
