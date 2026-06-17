@@ -9,6 +9,7 @@
   "scripts": {
     "start": "bun run ./src/cli/main.tsx",
     "dev": "bun run ./src/cli/main.tsx",
+    "smoke:tools": "bun run ./src/tools/smoke.ts",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
