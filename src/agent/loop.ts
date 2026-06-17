@@ -67,7 +67,7 @@ export async function* runAgentTurn(options: RunTurnOptions): AsyncIterable<Runt
   for (let step = 0; step < 5; step += 1) {
     let assistantText = ''
     const assistantId = crypto.randomUUID()
-    let usedTool = false
+    const pendingToolCalls: ToolCall[] = []
 
     for await (const event of modelClient.stream({
       model: state.model,
@@ -83,16 +83,7 @@ export async function* runAgentTurn(options: RunTurnOptions): AsyncIterable<Runt
       }
 
       if (event.type === 'tool_use') {
-        usedTool = true
-        yield* executeToolCall({
-          call: event.call,
-          state,
-          toolRegistry,
-          permissionController,
-          sessionStore,
-          signal,
-          decidePermission: options.decidePermission,
-        })
+        pendingToolCalls.push(event.call)
       }
     }
 
@@ -107,7 +98,20 @@ export async function* runAgentTurn(options: RunTurnOptions): AsyncIterable<Runt
       await sessionStore?.append(state.sessionId, { type: 'message', message: assistantMessage })
       yield { type: 'assistant_done', text: assistantText, messageId: assistantId }
     }
-    if (!usedTool) break
+
+    for (const call of pendingToolCalls) {
+      yield* executeToolCall({
+        call,
+        state,
+        toolRegistry,
+        permissionController,
+        sessionStore,
+        signal,
+        decidePermission: options.decidePermission,
+      })
+    }
+
+    if (pendingToolCalls.length === 0) break
   }
   state.turnCount += 1
 }

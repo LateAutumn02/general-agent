@@ -121,6 +121,8 @@ function toOpenAIMessages(messages: ChatMessage[], cwd: string, systemAdditions:
         'You are general-agent, a concise coding assistant running in a terminal UI.',
         `Current working directory: ${cwd}`,
         'You may use tools when needed. Prefer read-only tools before making changes.',
+        'When you say you will inspect, read, search, edit, or run something, call the matching tool in that same turn.',
+        'Do not announce a numbered tool plan and then stop after only prose; either call the tool or provide the final answer.',
         'For shell commands, explain why the command is needed; the terminal UI will ask the user for permission.',
         ...systemAdditions,
       ].join('\n'),
