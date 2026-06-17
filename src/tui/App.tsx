@@ -1,4 +1,5 @@
-import React, { useMemo, useRef, useState } from 'react'
+import React, { useEffect, useMemo, useRef, useState } from 'react'
+import { join } from 'node:path'
 import { Box, Text, useApp, useInput } from 'ink'
 import { runAgentTurn } from '../agent/loop.js'
 import { MockModelClient } from '../agent/mockModel.js'
@@ -9,6 +10,8 @@ import type {
   PermissionRequest as CorePermissionRequest,
 } from '../permissions/types.js'
 import type { RuntimeEvent } from '../runtime/events.js'
+import { JsonlSessionStore } from '../session/store.js'
+import type { ChatMessage } from '../session/types.js'
 import { Footer } from './components/Footer.js'
 import { PermissionPrompt } from './components/PermissionPrompt.js'
 import { PromptInput } from './components/PromptInput.js'
@@ -36,6 +39,7 @@ export function App({ args, cwd }: AppProps) {
   const [collectingDenyReason, setCollectingDenyReason] = useState(false)
   const [view, setView] = useState<'chat' | 'tasks'>('chat')
   const [processing, setProcessing] = useState(false)
+  const [sessionReady, setSessionReady] = useState(false)
   const [tasks, setTasks] = useState<TaskItem[]>(() => createInitialTasks())
   const model = useMemo(() => resolveModel(args), [args])
   const modelClient = useMemo(() => new MockModelClient(), [])
@@ -48,6 +52,36 @@ export function App({ args, cwd }: AppProps) {
     model,
   })
   const pendingPermission = useRef<PendingPermission | undefined>(undefined)
+  const sessionStore = useMemo(() => new JsonlSessionStore(join(cwd, '.general-agent', 'sessions')), [cwd])
+
+  useEffect(() => {
+    let cancelled = false
+    async function loadSession() {
+      const shouldResume = args.includes('--resume') || args.includes('-r')
+      if (shouldResume) {
+        const sessions = await sessionStore.list()
+        const latest = sessions[0]
+        if (latest) {
+          const loaded = await sessionStore.load(latest.id)
+          if (cancelled) return
+          agentState.current.sessionId = latest.id
+          agentState.current.messages = [...loaded.messages]
+          agentState.current.turnCount = loaded.messages.filter(message => message.role === 'user').length
+          setItems(transcriptFromMessages(loaded.messages))
+          setSessionReady(true)
+          return
+        }
+      }
+      const session = await sessionStore.create({ cwd, model, title: 'general-agent session' })
+      if (cancelled) return
+      agentState.current.sessionId = session.id
+      setSessionReady(true)
+    }
+    void loadSession()
+    return () => {
+      cancelled = true
+    }
+  }, [args, cwd, model, sessionStore])
 
   useInput((input, key) => {
     if (permission) {
@@ -79,7 +113,7 @@ export function App({ args, cwd }: AppProps) {
 
   async function submit(text: string, mode: PromptMode) {
     const trimmed = text.trim()
-    if (!trimmed || processing) return
+    if (!trimmed || processing || !sessionReady) return
 
     if (trimmed === '/exit' || trimmed === '/quit') {
       exit()
@@ -111,6 +145,7 @@ export function App({ args, cwd }: AppProps) {
         },
         modelClient,
         permissionController,
+        sessionStore,
         async decidePermission(permissionEvent) {
           return await waitForPermission(permissionEvent.request)
         },
@@ -262,7 +297,7 @@ export function App({ args, cwd }: AppProps) {
         />
       ) : null}
       <PromptInput
-        disabled={Boolean(permission) || processing}
+        disabled={Boolean(permission) || processing || !sessionReady}
         mode={inputMode}
         onModeChange={setInputMode}
         onSubmit={submit}
@@ -319,6 +354,22 @@ function summarizeToolResult(content: string) {
   if (!clean) return 'Tool completed'
   const firstLine = clean.split(/\r?\n/)[0] ?? clean
   return firstLine.length > 160 ? `${firstLine.slice(0, 157)}...` : firstLine
+}
+
+function transcriptFromMessages(messages: ChatMessage[]): TranscriptItem[] {
+  if (messages.length === 0) return createInitialTranscript()
+  return messages.flatMap((message): TranscriptItem[] => {
+    if (message.role === 'user') {
+      return [{ type: 'user' as const, id: message.id, text: message.text }]
+    }
+    if (message.role === 'assistant') {
+      return [{ type: 'assistant' as const, id: message.id, text: message.text }]
+    }
+    if (message.role === 'tool') {
+      return [{ type: 'tool_summary' as const, id: message.id, text: message.text, status: 'completed' as const }]
+    }
+    return []
+  })
 }
 
 function createInitialTasks(): TaskItem[] {

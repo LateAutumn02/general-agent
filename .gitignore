@@ -36,6 +36,7 @@ reference/
 
 # Project-local config and data (per-developer, not shared)
 .claude/
+.general-agent/
 .glagent/
 CLAUDE.md
 tests/
