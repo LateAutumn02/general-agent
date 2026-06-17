@@ -64,14 +64,16 @@ export function App({ args, cwd }: AppProps) {
   useEffect(() => {
     let cancelled = false
     async function loadSession() {
-      const shouldResume = args.includes('--resume') || args.includes('-r')
-      if (shouldResume) {
+      const resumeTarget = readOptionalArg(args, '--resume') ?? readOptionalArg(args, '-r')
+      if (resumeTarget !== undefined) {
         const sessions = await sessionStore.list()
-        const latest = sessions[0]
-        if (latest) {
-          const loaded = await sessionStore.load(latest.id)
+        const target = resumeTarget === true
+          ? sessions[0]
+          : sessions.find(session => session.id === resumeTarget || session.id.startsWith(resumeTarget))
+        if (target) {
+          const loaded = await sessionStore.load(target.id)
           if (cancelled) return
-          agentState.current.sessionId = latest.id
+          agentState.current.sessionId = target.id
           agentState.current.messages = [...loaded.messages]
           agentState.current.turnCount = loaded.messages.filter(message => message.role === 'user').length
           setItems(transcriptFromMessages(loaded.messages))
@@ -137,6 +139,11 @@ export function App({ args, cwd }: AppProps) {
       return
     }
 
+    if (trimmed === '/resume' || trimmed.startsWith('/resume ')) {
+      await handleResumeCommand(trimmed)
+      return
+    }
+
     if (trimmed === '/compact') {
       const result = compactMessages({
         messages: agentState.current.messages,
@@ -192,6 +199,44 @@ export function App({ args, cwd }: AppProps) {
     } finally {
       setProcessing(false)
     }
+  }
+
+  async function handleResumeCommand(command: string) {
+    const [, target] = command.split(/\s+/, 2)
+    const sessions = await sessionStore.list()
+    if (!target) {
+      const lines = sessions.slice(0, 8).map(session =>
+        `${session.id.slice(0, 8)}  ${session.title}  (${session.messageCount} messages)`,
+      )
+      setItems(prev => [
+        ...prev,
+        { type: 'user', id: crypto.randomUUID(), text: command },
+        {
+          type: 'tool_summary',
+          id: crypto.randomUUID(),
+          text: lines.length > 0
+            ? `Recent sessions:\n${lines.join('\n')}\n\nUse /resume <id> to restore one.`
+            : 'No saved sessions found.',
+          status: 'completed',
+        },
+      ])
+      return
+    }
+
+    const match = sessions.find(session => session.id === target || session.id.startsWith(target))
+    if (!match) {
+      setItems(prev => [
+        ...prev,
+        { type: 'user', id: crypto.randomUUID(), text: command },
+        { type: 'error', id: crypto.randomUUID(), text: `Session not found: ${target}` },
+      ])
+      return
+    }
+    const loaded = await sessionStore.load(match.id)
+    agentState.current.sessionId = match.id
+    agentState.current.messages = [...loaded.messages]
+    agentState.current.turnCount = loaded.messages.filter(message => message.role === 'user').length
+    setItems(transcriptFromMessages(loaded.messages))
   }
 
   function waitForPermission(request: CorePermissionRequest) {
@@ -427,4 +472,11 @@ function formatAge(timestamp: number) {
   const minutes = Math.floor(seconds / 60)
   if (minutes < 60) return `${minutes}m`
   return `${Math.floor(minutes / 60)}h`
+}
+
+function readOptionalArg(args: string[], name: string): string | true | undefined {
+  const index = args.indexOf(name)
+  if (index < 0) return undefined
+  const value = args[index + 1]
+  return value && !value.startsWith('-') ? value : true
 }

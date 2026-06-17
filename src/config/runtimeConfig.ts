@@ -1,5 +1,5 @@
 import { existsSync, readFileSync } from 'node:fs'
-import { join } from 'node:path'
+import { isAbsolute, join, resolve } from 'node:path'
 
 export type RuntimeConfig = {
   cwd: string
@@ -12,7 +12,7 @@ export type RuntimeConfig = {
 }
 
 export function loadRuntimeConfig(args: string[], cwd: string): RuntimeConfig {
-  const env = loadEnv(cwd)
+  const env = loadEnv(cwd, readArg(args, '--env-file'))
   const apiKey = readEnv(env, 'DEEPSEEK_API_KEY')
     ?? readEnv(env, 'OPENAI_API_KEY')
     ?? readEnv(env, 'ANTHROPIC_AUTH_TOKEN')
@@ -47,9 +47,14 @@ function readArg(args: string[], name: string) {
   return index >= 0 ? args[index + 1] : undefined
 }
 
-function loadEnv(cwd: string) {
+function loadEnv(cwd: string, envFile?: string) {
   const env = { ...process.env }
-  for (const path of [join(cwd, '.env.local'), join(cwd, '.env')]) {
+  const paths = [
+    join(cwd, '.env.local'),
+    join(cwd, '.env'),
+    envFile ? isAbsolute(envFile) ? envFile : resolve(cwd, envFile) : undefined,
+  ].filter((path): path is string => Boolean(path))
+  for (const path of paths) {
     if (!existsSync(path)) continue
     for (const [key, value] of Object.entries(parseEnv(readFileSync(path, 'utf8')))) {
       env[key] = value
