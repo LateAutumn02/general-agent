@@ -7,6 +7,13 @@ build/
 .venv/
 venv/
 
+# TypeScript / Bun
+node_modules/
+.bun/
+.turbo/
+coverage/
+*.tsbuildinfo
+
 # IDE
 .idea/
 .vscode/
