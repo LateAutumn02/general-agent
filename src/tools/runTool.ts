@@ -1,4 +1,5 @@
 import type { ToolCall, ToolContext, ToolDefinition, ToolResult } from './types.js'
+import { validateToolInput } from './validate.js'
 
 export async function runTool<TInput>(
   tool: ToolDefinition<TInput>,
@@ -15,6 +16,10 @@ export async function runTool<TInput>(
   }
   context.emit({ type: 'tool_call_started', call })
   try {
+    const validationErrors = validateToolInput(tool.inputSchema, input)
+    if (validationErrors.length > 0) {
+      throw new Error(`Invalid ${tool.name} input: ${validationErrors.join(', ')}`)
+    }
     const result = await tool.execute(input, context, call)
     context.emit({ type: 'tool_call_finished', callId: call.id, result })
     return result

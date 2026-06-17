@@ -2,6 +2,7 @@ import { bashTool } from './tools/bash.js'
 import { editTool } from './tools/edit.js'
 import { globTool } from './tools/glob.js'
 import { grepTool } from './tools/grep.js'
+import { powerShellTool } from './tools/powershell.js'
 import { readTool } from './tools/read.js'
 import { writeTool } from './tools/write.js'
 import type { ToolDefinition } from './types.js'
@@ -24,7 +25,9 @@ export class ToolRegistry {
 
 export function createDefaultToolRegistry() {
   const registry = new ToolRegistry()
-  for (const tool of [bashTool, readTool, writeTool, editTool, globTool, grepTool]) {
+  const tools = [bashTool, readTool, writeTool, editTool, globTool, grepTool]
+  if (process.platform === 'win32') tools.push(powerShellTool)
+  for (const tool of tools) {
     registry.register(tool)
   }
   return registry

@@ -7,6 +7,7 @@ import { runTool } from '../tools/runTool.js'
 import { createDefaultToolRegistry, ToolRegistry } from '../tools/registry.js'
 import type { ToolContext } from '../tools/types.js'
 import type { ToolCall } from '../tools/types.js'
+import { validateToolInput } from '../tools/validate.js'
 import type { AgentState, ModelClient, TurnRequest } from './types.js'
 
 export type RunTurnOptions = {
@@ -131,6 +132,11 @@ async function* executeToolCall(options: ExecuteToolCallOptions): AsyncIterable<
   const tool = toolRegistry.get(call.name)
   if (!tool) {
     yield { type: 'error', error: `Unknown tool: ${call.name}` }
+    return
+  }
+  const validationErrors = validateToolInput(tool.inputSchema, call.input)
+  if (validationErrors.length > 0) {
+    yield { type: 'error', error: `Invalid ${call.name} input: ${validationErrors.join(', ')}` }
     return
   }
 
