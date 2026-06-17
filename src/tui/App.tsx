@@ -4,6 +4,7 @@ import { Box, Text, useApp, useInput } from 'ink'
 import { runAgentTurn } from '../agent/loop.js'
 import { MockModelClient } from '../agent/mockModel.js'
 import type { AgentState } from '../agent/types.js'
+import { compactMessages } from '../compact/compact.js'
 import { PermissionController } from '../permissions/controller.js'
 import type {
   PermissionDecision as CorePermissionDecision,
@@ -130,6 +131,29 @@ export function App({ args, cwd }: AppProps) {
           text: 'Available now: type normally, prefix with ! for bash mode, use /help, /exit, or /quit.',
         },
       ])
+      return
+    }
+
+    if (trimmed === '/compact') {
+      const result = compactMessages({
+        messages: agentState.current.messages,
+        reason: 'manual',
+        preserveMessageCount: 6,
+      })
+      agentState.current.messages = result.messages
+      setItems([
+        ...transcriptFromMessages(result.messages),
+        {
+          type: 'tool_summary',
+          id: crypto.randomUUID(),
+          text: `Compacted ${result.removedMessageIds.length} messages`,
+          status: 'completed',
+        },
+      ])
+      await sessionStore.append(agentState.current.sessionId, {
+        type: 'message',
+        message: result.summaryMessage,
+      })
       return
     }
 
