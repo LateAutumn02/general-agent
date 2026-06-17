@@ -2,9 +2,10 @@ import React, { useEffect, useMemo, useRef, useState } from 'react'
 import { join } from 'node:path'
 import { Box, Text, useApp, useInput } from 'ink'
 import { runAgentTurn } from '../agent/loop.js'
-import { MockModelClient } from '../agent/mockModel.js'
 import type { AgentState } from '../agent/types.js'
+import { createModelClient } from '../api/modelFactory.js'
 import { compactMessages } from '../compact/compact.js'
+import { loadRuntimeConfig } from '../config/runtimeConfig.js'
 import { PermissionController } from '../permissions/controller.js'
 import type {
   PermissionDecision as CorePermissionDecision,
@@ -45,9 +46,10 @@ export function App({ args, cwd }: AppProps) {
   const [sessionReady, setSessionReady] = useState(false)
   const taskRegistry = useMemo(() => createInitialTaskRegistry(), [])
   const [tasks, setTasks] = useState<TaskItem[]>(() => taskItemsFromRegistry(taskRegistry))
-  const model = useMemo(() => resolveModel(args), [args])
-  const modelClient = useMemo(() => new MockModelClient(), [])
-  const permissionController = useMemo(() => new PermissionController('default'), [])
+  const config = useMemo(() => loadRuntimeConfig(args, cwd), [args, cwd])
+  const model = config.model
+  const modelClient = useMemo(() => createModelClient(config), [config])
+  const permissionController = useMemo(() => new PermissionController(config.permissionMode), [config.permissionMode])
   const agentState = useRef<AgentState>({
     sessionId: crypto.randomUUID(),
     messages: [],
@@ -329,14 +331,6 @@ export function App({ args, cwd }: AppProps) {
       <Footer cwd={cwd} model={model} mode={inputMode} />
     </Box>
   )
-}
-
-function resolveModel(args: string[]) {
-  const modelIndex = args.findIndex(arg => arg === '--model')
-  if (modelIndex >= 0 && args[modelIndex + 1]) {
-    return args[modelIndex + 1]
-  }
-  return process.env.ANTHROPIC_MODEL ?? process.env.GENERAL_AGENT_MODEL ?? 'mock'
 }
 
 function toTuiPermissionRequest(request: CorePermissionRequest): PermissionRequest {

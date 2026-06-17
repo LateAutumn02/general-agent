@@ -6,6 +6,7 @@ import type { RuntimeEvent } from '../runtime/events.js'
 import { runTool } from '../tools/runTool.js'
 import { createDefaultToolRegistry, ToolRegistry } from '../tools/registry.js'
 import type { ToolContext } from '../tools/types.js'
+import type { ToolCall } from '../tools/types.js'
 import type { AgentState, ModelClient, TurnRequest } from './types.js'
 
 export type RunTurnOptions = {
@@ -43,6 +44,26 @@ export async function* runAgentTurn(options: RunTurnOptions): AsyncIterable<Runt
   let assistantText = ''
   const assistantId = crypto.randomUUID()
 
+  if (request.mode === 'bash') {
+    yield* executeToolCall({
+      call: {
+        id: crypto.randomUUID(),
+        name: 'Bash',
+        input: { command: request.text },
+        status: 'pending',
+        createdAt: Date.now(),
+      },
+      state,
+      toolRegistry,
+      permissionController,
+      sessionStore,
+      signal,
+      decidePermission: options.decidePermission,
+    })
+    state.turnCount += 1
+    return
+  }
+
   for await (const event of modelClient.stream({
     model: state.model,
     messages: state.messages,
@@ -55,51 +76,14 @@ export async function* runAgentTurn(options: RunTurnOptions): AsyncIterable<Runt
     }
 
     if (event.type === 'tool_use') {
-      const tool = toolRegistry.get(event.call.name)
-      if (!tool) {
-        yield { type: 'error', error: `Unknown tool: ${event.call.name}` }
-        continue
-      }
-
-      const context: ToolContext = {
-        cwd: state.cwd,
+      yield* executeToolCall({
+        call: event.call,
+        state,
+        toolRegistry,
+        permissionController,
+        sessionStore,
         signal,
-        sessionId: state.sessionId,
-        emit: () => {},
-      }
-      const permission = await permissionController.evaluate(tool, event.call.input, context)
-      if (permission.type === 'deny') {
-        yield { type: 'error', error: permission.reason }
-        continue
-      }
-      if (permission.type === 'ask') {
-        const permissionEvent: RuntimeEvent = { type: 'permission_request', request: permission.request }
-        yield permissionEvent
-        const decision = options.decidePermission
-          ? await options.decidePermission(permissionEvent)
-          : { type: 'deny' as const, reason: 'No permission handler configured' }
-        permissionController.applyDecision(permission.request, decision)
-        yield { type: 'permission_resolved', requestId: permission.request.id, decision }
-        await sessionStore?.append(state.sessionId, {
-          type: 'permission_decision',
-          requestId: permission.request.id,
-          decision,
-        })
-        if (decision.type === 'deny') {
-          yield { type: 'error', error: decision.reason ?? `Denied ${event.call.name}` }
-          continue
-        }
-      }
-
-      const result = await runTool(tool, event.call.input, {
-        ...context,
-        emit: () => {},
-      }, { ...event.call, status: 'running' })
-      yield { type: 'tool_call_started', call: event.call }
-      yield { type: 'tool_call_finished', callId: event.call.id, result }
-      await sessionStore?.append(state.sessionId, {
-        type: 'runtime_event',
-        event: { type: 'tool_call_finished', callId: event.call.id, result },
+        decidePermission: options.decidePermission,
       })
     }
   }
@@ -116,4 +100,72 @@ export async function* runAgentTurn(options: RunTurnOptions): AsyncIterable<Runt
     yield { type: 'assistant_done', text: assistantText, messageId: assistantId }
   }
   state.turnCount += 1
+}
+
+type ExecuteToolCallOptions = {
+  call: ToolCall
+  state: AgentState
+  toolRegistry: ToolRegistry
+  permissionController: PermissionController
+  sessionStore?: JsonlSessionStore
+  signal: AbortSignal
+  decidePermission?: (event: Extract<RuntimeEvent, { type: 'permission_request' }>) => Promise<PermissionDecision>
+}
+
+async function* executeToolCall(options: ExecuteToolCallOptions): AsyncIterable<RuntimeEvent> {
+  const {
+    call,
+    state,
+    toolRegistry,
+    permissionController,
+    sessionStore,
+    signal,
+    decidePermission,
+  } = options
+  const tool = toolRegistry.get(call.name)
+  if (!tool) {
+    yield { type: 'error', error: `Unknown tool: ${call.name}` }
+    return
+  }
+
+  const context: ToolContext = {
+    cwd: state.cwd,
+    signal,
+    sessionId: state.sessionId,
+    emit: () => {},
+  }
+  const permission = await permissionController.evaluate(tool, call.input, context)
+  if (permission.type === 'deny') {
+    yield { type: 'error', error: permission.reason }
+    return
+  }
+  if (permission.type === 'ask') {
+    const permissionEvent: RuntimeEvent = { type: 'permission_request', request: permission.request }
+    yield permissionEvent
+    const decision = decidePermission
+      ? await decidePermission(permissionEvent)
+      : { type: 'deny' as const, reason: 'No permission handler configured' }
+    permissionController.applyDecision(permission.request, decision)
+    yield { type: 'permission_resolved', requestId: permission.request.id, decision }
+    await sessionStore?.append(state.sessionId, {
+      type: 'permission_decision',
+      requestId: permission.request.id,
+      decision,
+    })
+    if (decision.type === 'deny') {
+      yield { type: 'error', error: decision.reason ?? `Denied ${call.name}` }
+      return
+    }
+  }
+
+  yield { type: 'tool_call_started', call }
+  const result = await runTool(tool, call.input, {
+    ...context,
+    emit: () => {},
+  }, { ...call, status: 'running' })
+  yield { type: 'tool_call_finished', callId: call.id, result }
+  await sessionStore?.append(state.sessionId, {
+    type: 'runtime_event',
+    event: { type: 'tool_call_finished', callId: call.id, result },
+  })
 }

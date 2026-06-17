@@ -1,7 +1,8 @@
 import { createModelClient } from './modelFactory.js'
 import { loadRuntimeConfig } from '../config/runtimeConfig.js'
 
-const client = createModelClient(loadRuntimeConfig([], process.cwd()))
+const config = loadRuntimeConfig([], process.cwd())
+const client = createModelClient({ ...config, provider: 'mock', model: 'mock', apiKey: undefined })
 const events = []
 for await (const event of client.stream({
   model: 'mock',
