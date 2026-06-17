@@ -24,6 +24,12 @@ controller.applyDecision(bash.request, { type: 'allow', remember: true, rule })
 const remembered = await controller.evaluate(bashTool, { command: 'git status --short' }, context)
 if (remembered.type !== 'allow') throw new Error('remembered bash should be allowed')
 
+const outsideRead = await controller.evaluate(readTool, { path: '../outside.txt' }, context)
+if (outsideRead.type !== 'deny') throw new Error('sandbox should deny outside path')
+
+const dangerousCommand = await controller.evaluate(bashTool, { command: 'rm -rf /' }, context)
+if (dangerousCommand.type !== 'deny') throw new Error('sandbox should deny dangerous command')
+
 controller.setMode('plan')
 const denied = await controller.evaluate(bashTool, { command: 'echo nope' }, context)
 if (denied.type !== 'deny') throw new Error('plan mode should deny writes')

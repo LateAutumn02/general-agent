@@ -1,4 +1,5 @@
 import type { ToolDefinition } from '../tools/types.js'
+import { checkCommand, checkPathAccess, createDefaultSandboxPolicy } from '../sandbox/policy.js'
 import type {
   PermissionDecision,
   PermissionMode,
@@ -29,6 +30,9 @@ export class PermissionController {
     input: TInput,
     context: Parameters<ToolDefinition<TInput>['checkPermission']>[1],
   ): Promise<PermissionOutcome> {
+    const sandboxDecision = checkInputSandbox(context.cwd, input)
+    if (sandboxDecision.type === 'deny') return sandboxDecision
+
     if (this.mode === 'bypassPermissions') return { type: 'allow' }
     if (this.mode === 'plan' && !tool.readOnly) {
       return { type: 'deny', reason: `${tool.name} is disabled in plan mode` }
@@ -75,6 +79,17 @@ export class PermissionController {
       (text === rule.pattern || text.startsWith(`${rule.pattern} `) || rule.pattern === '*'),
     )
   }
+}
+
+function checkInputSandbox(cwd: string, input: unknown) {
+  const policy = createDefaultSandboxPolicy(cwd)
+  if (typeof input === 'object' && input !== null && 'command' in input) {
+    return checkCommand(policy, String((input as { command: unknown }).command))
+  }
+  if (typeof input === 'object' && input !== null && 'path' in input) {
+    return checkPathAccess(policy, String((input as { path: unknown }).path))
+  }
+  return { type: 'allow' as const }
 }
 
 export function createSuggestion(toolName: string, input: unknown): PermissionRule {
