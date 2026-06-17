@@ -41,7 +41,7 @@ export class OpenAICompatibleModelClient implements ModelClient {
       },
       body: JSON.stringify({
         model: request.model,
-        messages: toOpenAIMessages(request.messages, request.cwd),
+        messages: toOpenAIMessages(request.messages, request.cwd, request.systemAdditions ?? []),
         tools: request.tools?.map(toOpenAITool),
         tool_choice: request.tools?.length ? 'auto' : undefined,
         stream: true,
@@ -113,7 +113,7 @@ type PendingToolCall = {
   argumentsText: string
 }
 
-function toOpenAIMessages(messages: ChatMessage[], cwd: string) {
+function toOpenAIMessages(messages: ChatMessage[], cwd: string, systemAdditions: string[]) {
   return [
     {
       role: 'system',
@@ -122,6 +122,7 @@ function toOpenAIMessages(messages: ChatMessage[], cwd: string) {
         `Current working directory: ${cwd}`,
         'You may use tools when needed. Prefer read-only tools before making changes.',
         'For shell commands, explain why the command is needed; the terminal UI will ask the user for permission.',
+        ...systemAdditions,
       ].join('\n'),
     },
     ...messages.map(message => ({

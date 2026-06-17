@@ -22,6 +22,7 @@ export type ModelRequest = {
   messages: ChatMessage[]
   cwd: string
   tools?: ToolDefinition[]
+  systemAdditions?: string[]
 }
 
 export type ModelStreamEvent =

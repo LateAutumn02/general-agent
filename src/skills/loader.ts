@@ -31,6 +31,16 @@ export async function loadSkills(root: string): Promise<SkillManifest[]> {
   return skills
 }
 
+export async function loadDefaultSkills(cwd: string): Promise<SkillManifest[]> {
+  const roots = [
+    join(cwd, 'skills'),
+    join(cwd, '.general-agent', 'skills'),
+    join(process.env.USERPROFILE ?? process.env.HOME ?? cwd, '.general-agent', 'skills'),
+  ]
+  const groups = await Promise.all(roots.map(root => loadSkills(root)))
+  return groups.flat()
+}
+
 function firstDescription(text: string) {
   return text.split(/\r?\n/).find(line => line.trim() && !line.startsWith('#'))?.trim()
 }

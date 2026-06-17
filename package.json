@@ -9,7 +9,7 @@
   "scripts": {
     "start": "bun run ./src/cli/main.tsx",
     "dev": "bun run ./src/cli/main.tsx",
-    "smoke": "bun run smoke:api && bun run smoke:agent && bun run smoke:compact && bun run smoke:config && bun run smoke:mcp && bun run smoke:memory && bun run smoke:multi-agent && bun run smoke:permissions && bun run smoke:sandbox && bun run smoke:session && bun run smoke:skills && bun run smoke:swarm && bun run smoke:tasks && bun run smoke:tools",
+    "smoke": "bun run smoke:api && bun run smoke:agent && bun run smoke:compact && bun run smoke:config && bun run smoke:mcp && bun run smoke:memory && bun run smoke:multi-agent && bun run smoke:permissions && bun run smoke:runtime && bun run smoke:sandbox && bun run smoke:session && bun run smoke:skills && bun run smoke:swarm && bun run smoke:tasks && bun run smoke:tools",
     "smoke:api": "bun run ./src/api/smoke.ts",
     "smoke:agent": "bun run ./src/agent/smoke.ts",
     "smoke:compact": "bun run ./src/compact/smoke.ts",
@@ -18,6 +18,7 @@
     "smoke:memory": "bun run ./src/memory/smoke.ts",
     "smoke:multi-agent": "bun run ./src/multi-agent/smoke.ts",
     "smoke:permissions": "bun run ./src/permissions/smoke.ts",
+    "smoke:runtime": "bun run ./src/runtime/smoke.ts",
     "smoke:session": "bun run ./src/session/smoke.ts",
     "smoke:skills": "bun run ./src/skills/smoke.ts",
     "smoke:sandbox": "bun run ./src/sandbox/smoke.ts",

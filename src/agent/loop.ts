@@ -3,6 +3,7 @@ import type { PermissionDecision } from '../permissions/types.js'
 import type { JsonlSessionStore } from '../session/store.js'
 import type { ChatMessage } from '../session/types.js'
 import type { RuntimeEvent } from '../runtime/events.js'
+import { buildRuntimeSystemAdditions } from '../runtime/context.js'
 import { runTool } from '../tools/runTool.js'
 import { createDefaultToolRegistry, ToolRegistry } from '../tools/registry.js'
 import type { ToolContext } from '../tools/types.js'
@@ -31,6 +32,7 @@ export async function* runAgentTurn(options: RunTurnOptions): AsyncIterable<Runt
   } = options
   const toolRegistry = options.toolRegistry ?? createDefaultToolRegistry()
   const permissionController = options.permissionController ?? new PermissionController()
+  const systemAdditions = await buildRuntimeSystemAdditions(state.cwd)
   const userText = request.mode === 'bash' ? `!${request.text}` : request.text
   const userMessage: ChatMessage = {
     id: request.id,
@@ -72,6 +74,7 @@ export async function* runAgentTurn(options: RunTurnOptions): AsyncIterable<Runt
       messages: state.messages,
       cwd: state.cwd,
       tools: toolRegistry.list(),
+      systemAdditions,
     }, signal)) {
       if (event.type === 'text_delta') {
         assistantText += event.text
