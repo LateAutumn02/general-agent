@@ -5,6 +5,7 @@ export type CliArgs = {
   prompt?: string
   print: boolean
   resume?: string | true
+  continueFlag: boolean
   model?: string
   cwd: string
   permissionMode?: RuntimeConfig['permissionMode']
@@ -17,6 +18,7 @@ export function parseCliArgs(args: string[], defaultCwd: string): CliArgs {
   const parsed: CliArgs = {
     print: false,
     cwd: defaultCwd,
+    continueFlag: false,
     help: false,
     raw: args,
   }
@@ -28,6 +30,8 @@ export function parseCliArgs(args: string[], defaultCwd: string): CliArgs {
 
     if (arg === '--help' || arg === '-h') {
       parsed.help = true
+    } else if (arg === '--continue') {
+      parsed.continueFlag = true
     } else if (arg === '--print' || arg === '-p') {
       parsed.print = true
     } else if (arg === '--prompt') {
@@ -82,6 +86,7 @@ export function helpText() {
     '  general-agent [prompt]',
     '  general-agent --print "summarize this repo"',
     '  general-agent --resume [session-id]',
+    '  general-agent --continue',
     '',
     'Options:',
     '  --model <name>             Override model',
@@ -90,6 +95,7 @@ export function helpText() {
     '  --permission-mode <mode>   default | acceptEdits | plan | bypassPermissions',
     '  --print, -p                Run without TUI and print the response',
     '  --resume, -r [id]          Resume latest session or a specific session',
+    '  --continue                 Resume the most recent session',
     '  --help, -h                 Show this help',
   ].join('\n')
 }

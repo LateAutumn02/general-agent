@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react'
 import { join } from 'node:path'
-import { Box, useApp, useInput } from 'ink'
+import chalk from 'chalk'
+import { Box, Text, useApp, useInput } from 'ink'
 import { runAgentTurn } from '../agent/loop.js'
 import type { AgentState } from '../agent/types.js'
 import { createModelClient } from '../api/modelFactory.js'
@@ -14,7 +15,7 @@ import type {
 } from '../permissions/types.js'
 import type { RuntimeEvent } from '../runtime/events.js'
 import { JsonlSessionStore } from '../session/store.js'
-import type { ChatMessage } from '../session/types.js'
+import type { ChatMessage, SessionRecord } from '../session/types.js'
 import { loadDefaultSkills } from '../skills/loader.js'
 import { MultiAgentManager } from '../multi-agent/manager.js'
 import { createSwarmPlanFromGoal } from '../swarm/planner.js'
@@ -22,11 +23,14 @@ import { TaskRegistry } from '../tasks/registry.js'
 import type { TaskState } from '../tasks/types.js'
 import { Footer } from './components/Footer.js'
 import { Header } from './components/Header.js'
+import { LogSelector } from './components/LogSelector.js'
 import { PermissionPrompt } from './components/PermissionPrompt.js'
 import { PromptInput } from './components/PromptInput.js'
+import { Spinner } from './components/Spinner.js'
 import { TaskBoard } from './components/TaskBoard.js'
 import { Transcript } from './components/Transcript.js'
 import { createInitialTranscript } from './mockRuntime.js'
+import { SLASH_COMMANDS, formatSlashCommandHelp } from './slashCommands.js'
 import type { PermissionDecision, PermissionRequest, PromptMode, TaskItem, TranscriptItem } from './types.js'
 
 type AppProps = {
@@ -38,6 +42,13 @@ type PendingPermission = {
   request: CorePermissionRequest
   resolve: (decision: CorePermissionDecision) => void
 }
+
+/** /resume 命令的 UI 状态 */
+type ResumeView =
+  | null
+  | { type: 'loading' }
+  | { type: 'resuming'; sessionId: string }
+  | { type: 'picker'; logs: SessionRecord[]; loading: boolean }
 
 export function App({ args, cwd }: AppProps) {
   const { exit } = useApp()
@@ -51,11 +62,15 @@ export function App({ args, cwd }: AppProps) {
   const [detailTaskId, setDetailTaskId] = useState<string | undefined>()
   const [processing, setProcessing] = useState(false)
   const [sessionReady, setSessionReady] = useState(false)
+  const [promptValue, setPromptValue] = useState('')
+  const [resumeView, setResumeView] = useState<ResumeView>(null)
+  const resumeViewRef = useRef<ResumeView>(null)
+  resumeViewRef.current = resumeView
   const taskRegistry = useMemo(() => createInitialTaskRegistry(), [])
   const [tasks, setTasks] = useState<TaskItem[]>(() => taskItemsFromRegistry(taskRegistry))
   const config = useMemo(() => loadRuntimeConfig(args, cwd), [args, cwd])
-  const model = config.model
-  const [items, setItems] = useState<TranscriptItem[]>(() => createInitialTranscript(config.providerLabel, model))
+  const [currentModel, setCurrentModel] = useState(config.model)
+  const [items, setItems] = useState<TranscriptItem[]>(() => createInitialTranscript(config.providerLabel, config.model))
   const modelClient = useMemo(() => createModelClient(config), [config])
   const permissionController = useMemo(() => new PermissionController(config.permissionMode), [config.permissionMode])
   const agentState = useRef<AgentState>({
@@ -63,33 +78,90 @@ export function App({ args, cwd }: AppProps) {
     messages: [],
     turnCount: 0,
     cwd,
-    model,
+    model: currentModel,
   })
   const pendingPermission = useRef<PendingPermission | undefined>(undefined)
   const activeTurnController = useRef<AbortController | undefined>(undefined)
   const sessionStore = useMemo(() => new JsonlSessionStore(join(cwd, '.general-agent', 'sessions')), [cwd])
 
+  // ---- Session initialization (--resume / --continue) ----
+
   useEffect(() => {
     let cancelled = false
     async function loadSession() {
       const resumeTarget = readOptionalArg(args, '--resume') ?? readOptionalArg(args, '-r')
-      if (resumeTarget !== undefined) {
-        const sessions = await sessionStore.list()
-        const target = resumeTarget === true
-          ? sessions[0]
-          : sessions.find(session => session.id === resumeTarget || session.id.startsWith(resumeTarget))
-        if (target) {
-          const loaded = await sessionStore.load(target.id)
+      const continueFlag = hasFlag(args, '--continue')
+
+      // --continue: resume most recent session
+      if (continueFlag) {
+        const sessions = await sessionStore.list({ limit: 1 })
+        if (sessions.length > 0) {
+          const loaded = await sessionStore.load(sessions[0]!.id)
           if (cancelled) return
-          agentState.current.sessionId = target.id
-          agentState.current.messages = [...loaded.messages]
-          agentState.current.turnCount = loaded.messages.filter(message => message.role === 'user').length
-          setItems(transcriptFromMessages(loaded.messages))
+          applyResumedSession(loaded.record, loaded.messages)
           setSessionReady(true)
           return
         }
       }
-      const session = await sessionStore.create({ cwd, model, title: 'general-agent session' })
+
+      // --resume <uuid>
+      if (resumeTarget !== undefined) {
+        if (resumeTarget === true) {
+          // --resume without arg: pick most recent
+          const sessions = await sessionStore.list({ limit: 1 })
+          if (sessions.length > 0) {
+            const loaded = await sessionStore.load(sessions[0]!.id)
+            if (cancelled) return
+            applyResumedSession(loaded.record, loaded.messages)
+            setSessionReady(true)
+            return
+          }
+        } else {
+          // --resume <id>
+          let record: SessionRecord | null
+          let messages: ChatMessage[]
+
+          if (JsonlSessionStore.isValidUuid(resumeTarget)) {
+            // Try full load first
+            try {
+              const loaded = await sessionStore.load(resumeTarget)
+              record = loaded.record
+              messages = loaded.messages
+            } catch {
+              // Fallback: try lite lookup
+              record = await sessionStore.getLastSessionLog(resumeTarget)
+              if (record) {
+                const loaded = await sessionStore.load(record.id)
+                messages = loaded.messages
+              } else {
+                record = null
+                messages = []
+              }
+            }
+          } else {
+            // Prefix match
+            const sessions = await sessionStore.list()
+            const found = sessions.find(s => s.id.startsWith(resumeTarget))
+            if (found) {
+              const loaded = await sessionStore.load(found.id)
+              record = loaded.record
+              messages = loaded.messages
+            } else {
+              record = null
+              messages = []
+            }
+          }
+
+          if (record && !cancelled) {
+            applyResumedSession(record, messages)
+            setSessionReady(true)
+            return
+          }
+        }
+      }
+
+      // Normal startup: create new session
+      const session = await sessionStore.create({ cwd, model: agentState.current.model, title: 'general-agent session' })
       if (cancelled) return
       agentState.current.sessionId = session.id
       setSessionReady(true)
@@ -98,9 +170,25 @@ export function App({ args, cwd }: AppProps) {
     return () => {
       cancelled = true
     }
-  }, [args, cwd, model, sessionStore, config.providerLabel])
+  }, [args, cwd, sessionStore, config.providerLabel])
+
+  function applyResumedSession(record: SessionRecord, messages: ChatMessage[]) {
+    agentState.current.sessionId = record.id
+    agentState.current.messages = [...messages]
+    agentState.current.turnCount = messages.filter(m => m.role === 'user').length
+    agentState.current.model = record.model
+    setCurrentModel(record.model)
+    setItems(transcriptFromMessages(messages))
+  }
+
+  // ---- Global input handling ----
 
   useInput((input, key) => {
+    // Resume view active — block all chat input (picker handles its own useInput)
+    if (resumeViewRef.current) {
+      return
+    }
+
     if (permission) {
       handlePermissionInput(input, key)
       return
@@ -123,7 +211,7 @@ export function App({ args, cwd }: AppProps) {
       return
     }
 
-    if (view === 'chat') {
+    if (view === 'chat' && !promptValue.startsWith('/')) {
       const wheel = getWheelDirection(input, key)
       if (key.pageUp) {
         setChatScrollBack(prev => prev + 12)
@@ -198,11 +286,14 @@ export function App({ args, cwd }: AppProps) {
     setSelectedTaskId(allTasks[nextIndex]?.id)
   }
 
+  // ---- Submit handler ----
+
   async function submit(text: string, mode: PromptMode) {
     const trimmed = text.trim()
     if (!trimmed || processing || !sessionReady) return
 
     if (trimmed === '/exit' || trimmed === '/quit') {
+      await sessionStore.flush(agentState.current.sessionId)
       exit()
       return
     }
@@ -214,9 +305,14 @@ export function App({ args, cwd }: AppProps) {
         {
           type: 'assistant',
           id: crypto.randomUUID(),
-          text: 'Available now: type normally, use /memory, /skills, /compact, /resume, /exit, or prefix ! as a shell shortcut.',
+          text: `Available commands:\n${formatSlashCommandHelp()}\n\nPrefix ! to run a shell shortcut.`,
         },
       ])
+      return
+    }
+
+    if (trimmed === '/model' || trimmed.startsWith('/model ')) {
+      await handleModelCommand(trimmed)
       return
     }
 
@@ -236,6 +332,30 @@ export function App({ args, cwd }: AppProps) {
 
     if (trimmed === '/resume' || trimmed.startsWith('/resume ')) {
       await handleResumeCommand(trimmed)
+      return
+    }
+
+    if (trimmed === '/continue') {
+      setItems(prev => [...prev, { type: 'user', id: crypto.randomUUID(), text: trimmed }])
+      const sessions = await sessionStore.list({ limit: 1 })
+      if (sessions.length === 0) {
+        setItems(prev => [
+          ...prev,
+          { type: 'error', id: crypto.randomUUID(), text: 'No conversations found to resume.' },
+        ])
+        return
+      }
+      const loaded = await sessionStore.load(sessions[0]!.id)
+      applyResumedSession(loaded.record, loaded.messages)
+      setItems(prev => [
+        ...prev,
+        {
+          type: 'tool_summary',
+          id: crypto.randomUUID(),
+          text: `Resumed session ${loaded.record.id.slice(0, 8)}`,
+          status: 'completed',
+        },
+      ])
       return
     }
 
@@ -267,7 +387,21 @@ export function App({ args, cwd }: AppProps) {
       return
     }
 
+    if (trimmed.startsWith('/')) {
+      setItems(prev => [
+        ...prev,
+        { type: 'user', id: crypto.randomUUID(), text: trimmed },
+        {
+          type: 'error',
+          id: crypto.randomUUID(),
+          text: `Unknown command: ${trimmed.split(/\s+/, 1)[0]}. Use /help to see available commands.`,
+        },
+      ])
+      return
+    }
+
     setProcessing(true)
+    agentState.current.model = currentModel
     setItems(prev => [...prev, { type: 'user', id: crypto.randomUUID(), text: trimmed }])
     const turnController = new AbortController()
     activeTurnController.current = turnController
@@ -306,6 +440,42 @@ export function App({ args, cwd }: AppProps) {
       if (activeTurnController.current === turnController) activeTurnController.current = undefined
       setProcessing(false)
     }
+  }
+
+  // ---- Slash command handlers ----
+
+  async function handleModelCommand(command: string) {
+    const nextModel = command.slice('/model'.length).trim()
+    if (!nextModel) {
+      setItems(prev => [
+        ...prev,
+        { type: 'user', id: crypto.randomUUID(), text: command },
+        {
+          type: 'tool_summary',
+          id: crypto.randomUUID(),
+          text: `Current model: ${currentModel}\nUse /model <model-name> to switch, for example /model deepseek-v4-flash or /model qwen-plus.`,
+          status: 'completed',
+        },
+      ])
+      return
+    }
+
+    setCurrentModel(nextModel)
+    agentState.current.model = nextModel
+    await sessionStore.append(agentState.current.sessionId, {
+      type: 'metadata',
+      patch: { model: nextModel },
+    })
+    setItems(prev => [
+      ...prev,
+      { type: 'user', id: crypto.randomUUID(), text: command },
+      {
+        type: 'tool_summary',
+        id: crypto.randomUUID(),
+        text: `Switched model to ${nextModel}`,
+        status: 'completed',
+      },
+    ])
   }
 
   async function handleSwarmCommand(command: string) {
@@ -399,43 +569,166 @@ export function App({ args, cwd }: AppProps) {
     return true
   }
 
+  // ---- /resume command (3 dispatch paths) ----
+
   async function handleResumeCommand(command: string) {
-    const [, target] = command.split(/\s+/, 2)
-    const sessions = await sessionStore.list()
-    if (!target) {
-      const lines = sessions.slice(0, 8).map(session =>
-        `${session.id.slice(0, 8)}  ${session.title}  (${session.messageCount} messages)`,
-      )
+    const arg = command.slice('/resume'.length).trim()
+
+    // Path A: no argument — show interactive picker
+    if (!arg) {
+      setResumeView({ type: 'picker', logs: [], loading: true })
+      setItems(prev => [...prev, { type: 'user', id: crypto.randomUUID(), text: command }])
+      try {
+        const sessions = await sessionStore.list()
+        const filtered = sessions.filter(s => s.id !== agentState.current.sessionId && s.messageCount > 0)
+        if (filtered.length === 0) {
+          setItems(prev => [
+            ...prev,
+            { type: 'error', id: crypto.randomUUID(), text: 'No conversations found to resume.' },
+          ])
+          setResumeView(null)
+          return
+        }
+        setResumeView({ type: 'picker', logs: filtered, loading: false })
+      } catch {
+        setItems(prev => [
+          ...prev,
+          { type: 'error', id: crypto.randomUUID(), text: 'Failed to load conversations.' },
+        ])
+        setResumeView(null)
+      }
+      return
+    }
+
+    // Path B: UUID lookup
+    if (JsonlSessionStore.isValidUuid(arg)) {
+      setItems(prev => [...prev, { type: 'user', id: crypto.randomUUID(), text: command }])
+
+      // Try enriched list first
+      const sessions = await sessionStore.list()
+      const match = sessions
+        .filter(s => s.id === arg)
+        .sort((a, b) => b.updatedAt - a.updatedAt)[0]
+
+      let record: SessionRecord | null = match ?? null
+
+      // Fallback: direct file lookup for sessions dropped by enrich
+      if (!record) {
+        record = await sessionStore.getLastSessionLog(arg)
+      }
+
+      if (record) {
+        const loaded = await sessionStore.load(record.id)
+        applyResumedSession(loaded.record, loaded.messages)
+        setItems(prev => [
+          ...prev,
+          {
+            type: 'tool_summary',
+            id: crypto.randomUUID(),
+            text: `Resumed session ${arg.slice(0, 8)}`,
+            status: 'completed',
+          },
+        ])
+        return
+      }
+
       setItems(prev => [
         ...prev,
-        { type: 'user', id: crypto.randomUUID(), text: command },
+        { type: 'error', id: crypto.randomUUID(), text: `Session ${arg} was not found.` },
+      ])
+      return
+    }
+
+    // Path C: title match (exact customTitle)
+    setItems(prev => [...prev, { type: 'user', id: crypto.randomUUID(), text: command }])
+    const sessions = await sessionStore.list()
+    const titleMatches = sessions.filter(
+      s => s.customTitle === arg || s.firstPrompt === arg,
+    )
+
+    if (titleMatches.length === 1) {
+      const loaded = await sessionStore.load(titleMatches[0]!.id)
+      applyResumedSession(loaded.record, loaded.messages)
+      setItems(prev => [
+        ...prev,
         {
           type: 'tool_summary',
           id: crypto.randomUUID(),
-          text: lines.length > 0
-            ? `Recent sessions:\n${lines.join('\n')}\n\nUse /resume <id> to restore one.`
-            : 'No saved sessions found.',
+          text: `Resumed session "${arg}"`,
           status: 'completed',
         },
       ])
       return
     }
 
-    const match = sessions.find(session => session.id === target || session.id.startsWith(target))
-    if (!match) {
+    if (titleMatches.length > 1) {
       setItems(prev => [
         ...prev,
-        { type: 'user', id: crypto.randomUUID(), text: command },
-        { type: 'error', id: crypto.randomUUID(), text: `Session not found: ${target}` },
+        {
+          type: 'error',
+          id: crypto.randomUUID(),
+          text: `Found ${titleMatches.length} sessions matching "${arg}". Please use /resume to pick a specific session.`,
+        },
       ])
       return
     }
-    const loaded = await sessionStore.load(match.id)
-    agentState.current.sessionId = match.id
-    agentState.current.messages = [...loaded.messages]
-    agentState.current.turnCount = loaded.messages.filter(message => message.role === 'user').length
-    setItems(transcriptFromMessages(loaded.messages))
+
+    // No match at all
+    setItems(prev => [
+      ...prev,
+      { type: 'error', id: crypto.randomUUID(), text: `Session ${arg} was not found.` },
+    ])
   }
+
+  // ---- LogSelector callbacks ----
+
+  function handleLogSelect(log: SessionRecord) {
+    setResumeView({ type: 'resuming', sessionId: log.id })
+    // Defer load out of the useInput event chain to avoid React state deadlock
+    const id = log.id
+    setTimeout(() => {
+      void (async () => {
+        try {
+          const loaded = await sessionStore.load(id)
+          if (!loaded || loaded.messages.length === 0) {
+            throw new Error('Session has no messages to restore')
+          }
+          agentState.current.sessionId = loaded.record.id
+          agentState.current.messages = [...loaded.messages]
+          agentState.current.turnCount = loaded.messages.filter(m => m.role === 'user').length
+          agentState.current.model = loaded.record.model
+          setCurrentModel(loaded.record.model)
+          const transcriptItems: TranscriptItem[] = []
+          for (const m of loaded.messages) {
+            if (m.role === 'user') transcriptItems.push({ type: 'user', id: m.id, text: m.text })
+            else if (m.role === 'assistant') transcriptItems.push({ type: 'assistant', id: m.id, text: m.text })
+            else if (m.role === 'tool') {
+              const short = m.text.length > 300 ? m.text.slice(0, 300) + `... (${m.text.length} chars)` : m.text
+              transcriptItems.push({ type: 'tool_summary', id: m.id, text: short, status: 'completed' })
+            }
+          }
+          setResumeView(null)
+          setItems([
+            ...transcriptItems,
+            { type: 'tool_summary' as const, id: crypto.randomUUID(), text: `Resumed ${loaded.record.firstPrompt?.slice(0, 40) || loaded.record.title}`, status: 'completed' as const },
+          ])
+        } catch (error) {
+          setResumeView(null)
+          setItems(prev => [...prev, { type: 'error', id: crypto.randomUUID(), text: `Failed to resume: ${error instanceof Error ? error.message : String(error)}` }])
+        }
+      })()
+    }, 0)
+  }
+
+  function handleLogCancel() {
+    setItems(prev => [
+      ...prev,
+      { type: 'tool_summary', id: crypto.randomUUID(), text: 'Resume cancelled', status: 'completed' },
+    ])
+    setResumeView(null)
+  }
+
+  // ---- Permission handling ----
 
   function waitForPermission(request: CorePermissionRequest) {
     setPermission(toTuiPermissionRequest(request))
@@ -557,12 +850,14 @@ export function App({ args, cwd }: AppProps) {
     pending.resolve(coreDecision)
   }
 
+  // ---- Render ----
+
   if (view === 'tasks') {
     return (
       <TaskBoard
         tasks={tasks}
         cwd={cwd}
-        model={model}
+        model={currentModel}
         provider={config.providerLabel}
         selectedId={selectedTaskId}
         detailId={detailTaskId}
@@ -572,9 +867,17 @@ export function App({ args, cwd }: AppProps) {
 
   return (
     <Box flexDirection="column" minHeight={18}>
-      <Header cwd={cwd} model={model} provider={config.providerLabel} />
+      <Header cwd={cwd} model={currentModel} provider={config.providerLabel} />
       <Box flexDirection="column" flexGrow={1} paddingX={1}>
-        <Transcript items={items} scrollBack={chatScrollBack} />
+        {resumeView ? (
+          <ResumeViewDisplay
+            resumeView={resumeView}
+            onSelect={handleLogSelect}
+            onCancel={handleLogCancel}
+          />
+        ) : (
+          <Transcript items={items} scrollBack={chatScrollBack} />
+        )}
       </Box>
       {permission ? (
         <PermissionPrompt
@@ -583,16 +886,62 @@ export function App({ args, cwd }: AppProps) {
           collectingDenyReason={collectingDenyReason}
         />
       ) : null}
-      <PromptInput
-        disabled={Boolean(permission) || processing || !sessionReady}
-        mode={inputMode}
-        onModeChange={setInputMode}
-        onSubmit={submit}
-      />
-      <Footer cwd={cwd} model={model} provider={config.providerLabel} mode={inputMode} />
+      {resumeView ? null : (
+        <PromptInput
+          disabled={Boolean(permission) || processing || !sessionReady}
+          mode={inputMode}
+          value={promptValue}
+          slashCommands={SLASH_COMMANDS}
+          onChange={setPromptValue}
+          onModeChange={setInputMode}
+          onSubmit={submit}
+        />
+      )}
+      <Footer cwd={cwd} model={currentModel} provider={config.providerLabel} mode={inputMode} />
     </Box>
   )
+
 }
+
+// ---------------------------------------------------------------------------
+// ResumeViewDisplay — renders the /resume UI state (pure display, no useInput)
+// ---------------------------------------------------------------------------
+
+function ResumeViewDisplay({
+  resumeView,
+  onSelect,
+  onCancel,
+}: {
+  resumeView: ResumeView & {}
+  onSelect: (log: SessionRecord) => void
+  onCancel: () => void
+}) {
+  if (resumeView.type === 'loading' || resumeView.type === 'picker') {
+    return (
+      <LogSelector
+        logs={resumeView.type === 'picker' ? resumeView.logs : []}
+        loading={resumeView.type === 'loading' || resumeView.loading}
+        onSelect={onSelect}
+        onCancel={onCancel}
+      />
+    )
+  }
+
+  if (resumeView.type === 'resuming') {
+    return (
+      <Box paddingX={1} paddingY={1}>
+        <Spinner />
+        <Text>{chalk.hex('#F6D58B')(' Resuming conversation…')}</Text>
+      </Box>
+    )
+  }
+
+  return null
+}
+
+// ---------------------------------------------------------------------------
+// Helper functions (unchanged from original)
+// ---------------------------------------------------------------------------
 
 function toTuiPermissionRequest(request: CorePermissionRequest): PermissionRequest {
   const command = request.preview.type === 'command'
@@ -646,6 +995,9 @@ function transcriptFromMessages(messages: ChatMessage[]): TranscriptItem[] {
     }
     if (message.role === 'tool') {
       return [{ type: 'tool_summary' as const, id: message.id, text: message.text, status: 'completed' as const }]
+    }
+    if (message.role === 'system') {
+      return []
     }
     return []
   })
@@ -727,6 +1079,10 @@ function readOptionalArg(args: string[], name: string): string | true | undefine
   return value && !value.startsWith('-') ? value : true
 }
 
+function hasFlag(args: string[], name: string): boolean {
+  return args.includes(name)
+}
+
 function createTurnWatchdog(controller: AbortController, timeoutMs: number) {
   let timer: Timer | undefined
   const refresh = () => {
@@ -743,3 +1099,4 @@ function createTurnWatchdog(controller: AbortController, timeoutMs: number) {
     },
   }
 }
+
