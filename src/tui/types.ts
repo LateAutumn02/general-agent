@@ -27,6 +27,36 @@ export type TaskItem = {
   age: string
 }
 
+export type SwarmAgentItem = {
+  id: string
+  teamName: string
+  name: string
+  agentType: string
+  status: 'starting' | 'running' | 'idle' | 'completed' | 'failed'
+  activity: string
+  prompt?: string
+  output?: string
+  error?: string
+  toolUseCount: number
+  sent: number
+  received: number
+  createdAt: number
+  updatedAt: number
+  completedAt?: number
+  age: string
+}
+
+export type SwarmMessageItem = {
+  id: string
+  teamName: string
+  from: string
+  to: string
+  summary?: string
+  content: string
+  broadcast: boolean
+  createdAt: number
+}
+
 // ---- Swarm / Multi-Agent Visualization Types ----
 
 /** 队友消息类型（在 transcript 中渲染） */
@@ -65,6 +95,7 @@ export type TranscriptItem =
   | { type: 'error'; id: string; text: string }
   /** Agent 分组进度（多 agent 并行时） */
   | { type: 'agent_progress'; id: string; agents: AgentProgressLine[]; status: 'running' | 'completed' }
+  | { type: 'swarm_message'; id: string; teamName: string; from: string; to: string; summary?: string; content: string; broadcast: boolean }
   /** 队友消息 */
   | { type: 'teammate_message'; id: string; from: string; color: string; messageType: TeammateMessageType; summary: string; content: string }
   /** 折叠的工具调用组（同类合并） */

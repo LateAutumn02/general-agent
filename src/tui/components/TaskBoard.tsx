@@ -1,7 +1,7 @@
 import React from 'react'
 import { Box, Text } from 'ink'
 import { theme } from '../theme.js'
-import type { TaskItem, TaskStatus } from '../types.js'
+import type { SwarmAgentItem, SwarmMessageItem, TaskItem, TaskStatus } from '../types.js'
 import { MarkdownText } from './MarkdownText.js'
 
 type TaskBoardProps = {
@@ -11,6 +11,8 @@ type TaskBoardProps = {
   provider?: string
   selectedId?: string
   detailId?: string
+  swarmAgents?: SwarmAgentItem[]
+  swarmMessages?: SwarmMessageItem[]
 }
 
 export function TaskBoard({
@@ -20,6 +22,8 @@ export function TaskBoard({
   provider = 'general-agent',
   selectedId,
   detailId,
+  swarmAgents = [],
+  swarmMessages = [],
 }: TaskBoardProps) {
   const awaiting = tasks.filter(task => task.status === 'awaiting_input')
   const running = tasks.filter(task => task.status === 'running')
@@ -44,6 +48,7 @@ export function TaskBoard({
         <TaskDetail task={detailTask} />
       ) : (
         <>
+          <SwarmOverview agents={swarmAgents} messages={swarmMessages} />
           <TaskGroup title="Needs input" tasks={awaiting} selectedId={selectedId} />
           <TaskGroup title="Working" tasks={running} selectedId={selectedId} />
           <TaskGroup title="Completed" tasks={completed} selectedId={selectedId} />
@@ -57,6 +62,49 @@ export function TaskBoard({
             : 'Up/down select · Enter opens · C cancels · Right arrow returns'}
         </Text>
       </Box>
+    </Box>
+  )
+}
+
+function SwarmOverview({
+  agents,
+  messages,
+}: {
+  agents: SwarmAgentItem[]
+  messages: SwarmMessageItem[]
+}) {
+  if (agents.length === 0 && messages.length === 0) return null
+  const running = agents.filter(agent => agent.status === 'starting' || agent.status === 'running')
+  const completed = agents.filter(agent => agent.status === 'completed')
+  const failed = agents.filter(agent => agent.status === 'failed')
+  return (
+    <Box flexDirection="column" marginTop={1}>
+      <Text color={theme.assistant} bold>Swarm</Text>
+      <Text color={theme.muted}>
+        {agents.length} agents · {running.length} running · {completed.length} completed · {failed.length} failed · {messages.length} messages
+      </Text>
+      {agents.length > 0 ? (
+        <Box flexDirection="column" marginTop={1}>
+          <Text color={theme.assistant}>Agents</Text>
+          {agents.slice(0, 8).map(agent => (
+            <Text key={agent.id} color={swarmStatusColor(agent.status)}>
+              {agent.status === 'running' || agent.status === 'starting' ? '●' : agent.status === 'failed' ? '!' : '✓'} {agent.name}@{agent.teamName}
+              <Text color={theme.muted}>  {agent.activity} · sent {agent.sent} · recv {agent.received} · tools {agent.toolUseCount} · {agent.age}</Text>
+            </Text>
+          ))}
+        </Box>
+      ) : null}
+      {messages.length > 0 ? (
+        <Box flexDirection="column" marginTop={1}>
+          <Text color={theme.assistant}>Message Flow</Text>
+          {messages.slice(-10).map(message => (
+            <Text key={message.id} color={theme.accent}>
+              {message.from} → {message.broadcast ? 'team' : message.to}
+              <Text color={theme.muted}>  {oneLine(message.summary || message.content, 96)}</Text>
+            </Text>
+          ))}
+        </Box>
+      ) : null}
     </Box>
   )
 }
@@ -114,4 +162,16 @@ function statusColor(status: TaskStatus) {
   if (status === 'running') return theme.accent
   if (status === 'failed' || status === 'cancelled') return theme.error
   return theme.success
+}
+
+function swarmStatusColor(status: SwarmAgentItem['status']) {
+  if (status === 'starting' || status === 'running') return theme.accent
+  if (status === 'failed') return theme.error
+  return theme.success
+}
+
+function oneLine(text: string | undefined, maxLength: number) {
+  const clean = (text ?? '').replace(/\s+/g, ' ').trim()
+  if (clean.length <= maxLength) return clean
+  return `${clean.slice(0, Math.max(0, maxLength - 3))}...`
 }

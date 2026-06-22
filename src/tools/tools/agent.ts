@@ -76,9 +76,36 @@ When NOT to use: reading a specific file (use Read), searching for a class (use 
       // Check mailbox for any prior messages
       const mailboxMsgs = await readUnreadMessages(teamsDir, teamName, agentName)
       if (mailboxMsgs.length > 0) {
+        context.emit({
+          type: 'swarm_inbox_read',
+          teamName,
+          agentName,
+          messages: mailboxMsgs,
+          createdAt: Date.now(),
+        })
         // Inject mailbox messages into the agent's context
         const msgs = mailboxMsgs.map(m => `[@${m.from}] ${m.text}`).join('\n')
         input = { ...input, prompt: `${input.prompt}\n\n<inbox>\n${msgs}\n</inbox>` }
+      }
+    }
+
+    if (context.startSubAgent && agentName) {
+      const started = await context.startSubAgent({
+        description: input.description,
+        prompt: input.prompt,
+        model: 'inherit',
+        agentName,
+        teamName,
+        agentType,
+      })
+      return {
+        callId: call.id,
+        ok: true,
+        content: [
+          `Agent started in background: ${started.agentKey} (${agentType})`,
+          `Description: ${input.description}`,
+          `Progress and messages will appear in the swarm board.`,
+        ].join('\n'),
       }
     }
 

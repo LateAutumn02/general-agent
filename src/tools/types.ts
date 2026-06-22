@@ -51,6 +51,15 @@ export type ToolContext = {
     teamName?: string
     agentType?: string
   }) => Promise<string>
+  /** Agent tool: start a background sub-agent and stream status via runtime events */
+  startSubAgent?: (opts: {
+    description: string
+    prompt: string
+    model: string
+    agentName: string
+    teamName: string
+    agentType?: string
+  }) => Promise<{ agentKey: string }>
 }
 
 export type ToolDefinition<TInput = unknown> = {

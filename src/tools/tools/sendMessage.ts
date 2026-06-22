@@ -58,6 +58,16 @@ Messages are delivered to the recipient's inbox and read on their next Agent tur
           input.summary,
         )
       }
+      context.emit({
+        type: 'swarm_message_sent',
+        teamName,
+        from,
+        to: '*',
+        summary: input.summary,
+        text: input.message,
+        broadcast: true,
+        createdAt: Date.now(),
+      })
       return {
         callId: call.id,
         ok: true,
@@ -69,6 +79,16 @@ Messages are delivered to the recipient's inbox and read on their next Agent tur
       from,
       text: input.message,
       summary: input.summary,
+    })
+    context.emit({
+      type: 'swarm_message_sent',
+      teamName,
+      from,
+      to: input.to,
+      summary: input.summary,
+      text: input.message,
+      broadcast: false,
+      createdAt: Date.now(),
     })
 
     return {

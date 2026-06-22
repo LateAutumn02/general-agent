@@ -77,6 +77,9 @@ function flattenTranscript(items: TranscriptItem[], columns: number) {
       case 'agent_progress':
         pushAgentProgress(lines, item.agents, item.status, columns)
         break
+      case 'swarm_message':
+        pushSwarmMessage(lines, item.teamName, item.from, item.to, item.summary, item.content, item.broadcast, columns)
+        break
       case 'teammate_message':
         pushTeammateMessage(lines, item.from, item.color, item.messageType, item.summary, item.content, columns)
         break
@@ -149,6 +152,24 @@ function pushTeammateMessage(
   const labelColor = messageType === 'task_completed' ? '#9FCF9B' : messageType === 'shutdown_request' ? '#FF6B6B' : '#C3A6FF'
   pushWrapped(lines, `${icon} @${from}`, labelColor, columns, true)
   pushWrapped(lines, `  ${summary || content.slice(0, 200)}`, '#807B6E', columns)
+}
+
+function pushSwarmMessage(
+  lines: RenderLine[],
+  teamName: string,
+  from: string,
+  to: string,
+  summary: string | undefined,
+  content: string,
+  broadcast: boolean,
+  columns: number,
+) {
+  const target = broadcast ? 'team' : to
+  pushWrapped(lines, `MSG ${from} -> ${target}  [${teamName}]`, '#C3A6FF', columns, true)
+  pushWrapped(lines, `  ${summary || content.slice(0, 180)}`, '#807B6E', columns)
+  if (summary && content.trim() && content.trim() !== summary.trim()) {
+    pushWrapped(lines, `  ${content.slice(0, 240)}`, '#E6E6E6', columns)
+  }
 }
 
 // ---- Helpers ----

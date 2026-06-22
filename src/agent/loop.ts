@@ -20,6 +20,7 @@ export type RunTurnOptions = {
   sessionStore?: JsonlSessionStore
   signal?: AbortSignal
   toolContext?: Pick<ToolContext, 'agentName' | 'teamName'>
+  eventSink?: (event: RuntimeEvent) => void
   decidePermission?: (event: Extract<RuntimeEvent, { type: 'permission_request' }>) => Promise<PermissionDecision>
 }
 
@@ -62,6 +63,7 @@ export async function* runAgentTurn(options: RunTurnOptions): AsyncIterable<Runt
       modelClient,
       toolContext: options.toolContext,
       decidePermission: options.decidePermission,
+      eventSink: options.eventSink,
     })
     state.turnCount += 1
     return
@@ -118,8 +120,9 @@ export async function* runAgentTurn(options: RunTurnOptions): AsyncIterable<Runt
       }
     }
 
+    let backgroundAgentStarted = false
     for (const call of pendingToolCalls) {
-      yield* executeToolCall({
+      for await (const event of executeToolCall({
         call,
         state,
         toolRegistry,
@@ -129,10 +132,22 @@ export async function* runAgentTurn(options: RunTurnOptions): AsyncIterable<Runt
         modelClient,
         toolContext: options.toolContext,
         decidePermission: options.decidePermission,
-      })
+        eventSink: options.eventSink,
+      })) {
+        if (
+          event.type === 'tool_call_finished'
+          && call.name === 'Agent'
+          && event.result.ok
+          && event.result.content.startsWith('Agent started in background:')
+        ) {
+          backgroundAgentStarted = true
+        }
+        yield event
+      }
     }
 
     if (pendingToolCalls.length === 0) break
+    if (backgroundAgentStarted) break
     if (step === maxModelSteps - 1) {
       yield {
         type: 'error',
@@ -152,6 +167,7 @@ type ExecuteToolCallOptions = {
   signal: AbortSignal
   modelClient: ModelClient
   toolContext?: Pick<ToolContext, 'agentName' | 'teamName'>
+  eventSink?: (event: RuntimeEvent) => void
   decidePermission?: (event: Extract<RuntimeEvent, { type: 'permission_request' }>) => Promise<PermissionDecision>
 }
 
@@ -165,6 +181,7 @@ async function* executeToolCall(options: ExecuteToolCallOptions): AsyncIterable<
     signal,
     modelClient,
     toolContext,
+    eventSink,
     decidePermission,
   } = options
   const tool = toolRegistry.get(call.name)
@@ -180,13 +197,133 @@ async function* executeToolCall(options: ExecuteToolCallOptions): AsyncIterable<
     return
   }
 
+  const emitToolEvent = (event: RuntimeEvent) => {
+    if (event.type === 'tool_call_started' || event.type === 'tool_call_finished') return
+    eventSink?.(event)
+    void sessionStore?.append(state.sessionId, { type: 'runtime_event', event })
+  }
+
   const context: ToolContext = {
     cwd: state.cwd,
     signal,
     sessionId: state.sessionId,
     agentName: toolContext?.agentName,
     teamName: toolContext?.teamName,
-    emit: () => {},
+    emit: emitToolEvent,
+    async startSubAgent(opts) {
+      const agentName = opts.agentName
+      const teamName = opts.teamName
+      const agentType = opts.agentType ?? 'general-purpose'
+      const createdAt = Date.now()
+      const agentKey = `${agentName}@${teamName}`
+      const emit = (event: RuntimeEvent) => {
+        eventSink?.(event)
+        void sessionStore?.append(state.sessionId, { type: 'runtime_event', event })
+      }
+
+      emit({
+        type: 'swarm_agent_status',
+        teamName,
+        agentName,
+        agentType,
+        status: 'starting',
+        activity: 'Starting',
+        description: opts.description,
+        prompt: opts.prompt,
+        toolUseCount: 0,
+        createdAt,
+        updatedAt: createdAt,
+      })
+
+      void (async () => {
+        const subState: AgentState = {
+          sessionId: `${state.sessionId}:${agentName}`,
+          messages: [{
+            id: crypto.randomUUID(),
+            role: 'system',
+            text: [
+              `You are sub-agent ${agentName} in team ${teamName}.`,
+              opts.description,
+              'Use the available tools when needed.',
+              'If asked to message another teammate, call SendMessage in this same turn.',
+              'Do not merely describe a plan when a tool call is required.',
+            ].join('\n'),
+            createdAt,
+          }],
+          turnCount: 0,
+          cwd: state.cwd,
+          model: opts.model === 'inherit' ? state.model : opts.model,
+        }
+        let lastAssistant = ''
+        let toolUseCount = 0
+        const update = (
+          status: 'running' | 'idle' | 'completed' | 'failed',
+          activity: string,
+          patch: Partial<Extract<RuntimeEvent, { type: 'swarm_agent_status' }>> = {},
+        ) => {
+          const now = Date.now()
+          emit({
+            type: 'swarm_agent_status',
+            teamName,
+            agentName,
+            agentType,
+            status,
+            activity,
+            description: opts.description,
+            prompt: opts.prompt,
+            output: patch.output,
+            error: patch.error,
+            toolUseCount,
+            createdAt,
+            updatedAt: now,
+            completedAt: patch.completedAt,
+          })
+        }
+
+        try {
+          update('running', 'Thinking')
+          for await (const event of runAgentTurn({
+            state: subState,
+            request: {
+              id: crypto.randomUUID(),
+              mode: 'prompt',
+              text: opts.prompt,
+              createdAt: Date.now(),
+            },
+            modelClient,
+            toolRegistry: createSubAgentToolRegistry(agentType),
+            permissionController: new PermissionController('bypassPermissions'),
+            signal,
+            toolContext: { agentName, teamName },
+            eventSink: emit,
+          })) {
+            emit(event)
+            if (event.type === 'assistant_done') {
+              lastAssistant = event.text
+              update('running', event.text.split(/\r?\n/, 1)[0]?.slice(0, 80) || 'Responding')
+            } else if (event.type === 'tool_call_started') {
+              toolUseCount += 1
+              update('running', `Running ${event.call.name}`)
+            } else if (event.type === 'tool_call_finished') {
+              update('running', event.result.ok ? `${event.result.content.split(/\r?\n/, 1)[0]?.slice(0, 80) || 'Tool completed'}` : `Failed ${event.result.error ?? 'tool'}`)
+            } else if (event.type === 'error') {
+              update('failed', event.error, { error: event.error, completedAt: Date.now() })
+            }
+          }
+          update('completed', 'Done', {
+            output: lastAssistant.trim() || '(agent returned no response)',
+            completedAt: Date.now(),
+          })
+        } catch (err) {
+          update('failed', 'Failed', {
+            error: err instanceof Error ? err.message : String(err),
+            completedAt: Date.now(),
+          })
+        }
+      })()
+
+      return { agentKey }
+    },
     async runSubAgent(opts) {
       const subState: AgentState = {
         sessionId: `${state.sessionId}:${opts.agentName ?? crypto.randomUUID()}`,
@@ -224,6 +361,7 @@ async function* executeToolCall(options: ExecuteToolCallOptions): AsyncIterable<
           agentName: opts.agentName,
           teamName: opts.teamName,
         },
+        eventSink,
       })) {
         if (event.type === 'assistant_done') {
           lastAssistant = event.text
@@ -261,7 +399,7 @@ async function* executeToolCall(options: ExecuteToolCallOptions): AsyncIterable<
   yield { type: 'tool_call_started', call }
   const result = await runTool(tool, call.input, {
     ...context,
-    emit: () => {},
+    emit: emitToolEvent,
   }, { ...call, status: 'running' })
   yield { type: 'tool_call_finished', callId: call.id, result }
   const toolMessage: ChatMessage = {

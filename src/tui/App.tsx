@@ -30,7 +30,7 @@ import { TaskBoard } from './components/TaskBoard.js'
 import { Transcript } from './components/Transcript.js'
 import { createInitialTranscript } from './mockRuntime.js'
 import { SLASH_COMMANDS, formatSlashCommandHelp } from './slashCommands.js'
-import type { AgentPill, PermissionDecision, PermissionRequest, PromptMode, TaskItem, TranscriptItem } from './types.js'
+import type { AgentPill, PermissionDecision, PermissionRequest, PromptMode, SwarmAgentItem, SwarmMessageItem, TaskItem, TranscriptItem } from './types.js'
 
 type AppProps = {
   args: string[]
@@ -68,23 +68,29 @@ export function App({ args, cwd }: AppProps) {
   resumeViewRef.current = resumeView
   const taskRegistry = useMemo(() => createInitialTaskRegistry(), [])
   const [tasks, setTasks] = useState<TaskItem[]>(() => taskItemsFromRegistry(taskRegistry))
+  const [swarmAgents, setSwarmAgents] = useState<SwarmAgentItem[]>([])
+  const [swarmMessages, setSwarmMessages] = useState<SwarmMessageItem[]>([])
   // Compute agent pills for footer display
   const agentPills = useMemo<AgentPill[]>(() => {
-    const agentTasks = taskRegistry.list().filter(t => t.type === 'agent')
+    const agentTasks = swarmAgents.length > 0 ? swarmAgents : taskRegistry.list().filter(t => t.type === 'agent').map(t => ({
+      id: t.id,
+      name: t.title,
+    }))
     if (agentTasks.length === 0) return []
     const pills: AgentPill[] = [{ name: 'main', color: 'yellow', isMain: true, isSelected: false }]
     const colors: AgentPill['color'][] = ['cyan', 'green', 'magenta', 'blue', 'red']
     for (let i = 0; i < agentTasks.length; i++) {
       const t = agentTasks[i]!
+      const name = 'teamName' in t ? `${t.name}@${t.teamName}` : t.name
       pills.push({
-        name: t.title.length > 12 ? t.title.slice(0, 11) : t.title,
+        name: name.length > 12 ? name.slice(0, 11) : name,
         color: colors[i % colors.length]!,
         isMain: false,
         isSelected: false,
       })
     }
     return pills
-  }, [tasks])
+  }, [swarmAgents, tasks])
   const config = useMemo(() => loadRuntimeConfig(args, cwd), [args, cwd])
   const [currentModel, setCurrentModel] = useState(config.model)
   const [items, setItems] = useState<TranscriptItem[]>(() => createInitialTranscript(config.providerLabel, config.model))
@@ -104,6 +110,7 @@ export function App({ args, cwd }: AppProps) {
   // Map callId → tool name for detecting Agent tool results
   const toolCallNames = useRef<Map<string, string>>(new Map())
   const agentTaskIds = useRef<Map<string, string>>(new Map())
+  const swarmTaskIds = useRef<Map<string, string>>(new Map())
   const sessionStore = useMemo(() => new JsonlSessionStore(join(cwd, '.general-agent', 'sessions')), [cwd])
 
   // ---- Session initialization (--resume / --continue) ----
@@ -207,6 +214,10 @@ export function App({ args, cwd }: AppProps) {
     if (view !== 'tasks') return
     const interval = setInterval(() => {
       setTasks(taskItemsFromRegistry(taskRegistry))
+      setSwarmAgents(prev => prev.map(agent => ({
+        ...agent,
+        age: formatSwarmAgentDuration(agent.createdAt, agent.completedAt, agent.status),
+      })))
     }, 1000)
     return () => clearInterval(interval)
   }, [taskRegistry, view])
@@ -463,6 +474,7 @@ export function App({ args, cwd }: AppProps) {
         permissionController,
         sessionStore,
         signal: turnController.signal,
+        eventSink: applyRuntimeEvent,
         async decidePermission(permissionEvent) {
           return await waitForPermission(permissionEvent.request)
         },
@@ -787,6 +799,9 @@ export function App({ args, cwd }: AppProps) {
           output: input.prompt,
         })
         agentTaskIds.current.set(event.call.id, task.id)
+        if (input.name) {
+          swarmTaskIds.current.set(`${input.teamName}:${input.name}`, task.id)
+        }
         setSelectedTaskId(prev => prev ?? task.id)
         setTasks(taskItemsFromRegistry(taskRegistry))
         void sessionStore.append(agentState.current.sessionId, {
@@ -818,9 +833,12 @@ export function App({ args, cwd }: AppProps) {
       const toolName = toolCallNames.current.get(event.callId) ?? ''
       const taskId = agentTaskIds.current.get(event.callId)
       if (taskId) {
+        const backgroundAgentStarted = toolName === 'Agent'
+          && event.result.ok
+          && event.result.content.startsWith('Agent started in background:')
         const updated = taskRegistry.update(taskId, {
-          status: event.result.ok ? 'completed' : 'failed',
-          activity: event.result.ok ? 'Done' : 'Failed',
+          status: backgroundAgentStarted ? 'running' : event.result.ok ? 'completed' : 'failed',
+          activity: backgroundAgentStarted ? 'Running in background' : event.result.ok ? 'Done' : 'Failed',
           messages: [
             ...(taskRegistry.get(taskId)?.messages ?? []),
             {
@@ -839,7 +857,7 @@ export function App({ args, cwd }: AppProps) {
             task: toTaskItem(updated),
           })
         }
-        agentTaskIds.current.delete(event.callId)
+        if (!backgroundAgentStarted) agentTaskIds.current.delete(event.callId)
       }
       if (toolName === 'Agent' && event.result.ok) {
         // Agent tool finished — show agent_progress item with first line of response
@@ -870,6 +888,101 @@ export function App({ args, cwd }: AppProps) {
       }
     } else if (event.type === 'error') {
       setItems(prev => [...prev, { type: 'error', id: crypto.randomUUID(), text: event.error }])
+    } else if (event.type === 'swarm_agent_status') {
+      applySwarmAgentStatus(event)
+    } else if (event.type === 'swarm_message_sent') {
+      const item: SwarmMessageItem = {
+        id: crypto.randomUUID(),
+        teamName: event.teamName,
+        from: event.from,
+        to: event.to,
+        summary: event.summary,
+        content: event.text,
+        broadcast: event.broadcast,
+        createdAt: event.createdAt,
+      }
+      setSwarmMessages(prev => [...prev, item])
+      setSwarmAgents(prev => prev.map(agent => {
+        if (agent.teamName !== item.teamName) return agent
+        const sent = agent.name === item.from ? agent.sent + 1 : agent.sent
+        const received = item.broadcast
+          ? agent.name === item.from ? agent.received : agent.received + 1
+          : agent.name === item.to ? agent.received + 1 : agent.received
+        return { ...agent, sent, received, updatedAt: item.createdAt }
+      }))
+      setItems(prev => [
+        ...prev,
+        {
+          type: 'swarm_message',
+          id: item.id,
+          teamName: item.teamName,
+          from: item.from,
+          to: item.to,
+          summary: item.summary,
+          content: item.content,
+          broadcast: item.broadcast,
+        },
+      ])
+    } else if (event.type === 'swarm_inbox_read') {
+      if (event.messages.length > 0) {
+        setSwarmAgents(prev => prev.map(agent =>
+          agent.teamName === event.teamName && agent.name === event.agentName
+            ? { ...agent, received: agent.received + event.messages.length, updatedAt: event.createdAt }
+            : agent,
+        ))
+      }
+    }
+  }
+
+  function applySwarmAgentStatus(event: Extract<RuntimeEvent, { type: 'swarm_agent_status' }>) {
+    const key = `${event.teamName}:${event.agentName}`
+    setSwarmAgents(prev => {
+      const existing = prev.find(agent => agent.id === key)
+      const sent = swarmMessages.filter(message => message.teamName === event.teamName && message.from === event.agentName).length
+      const received = swarmMessages.filter(message => message.teamName === event.teamName && (message.to === event.agentName || message.broadcast)).length
+      const next: SwarmAgentItem = {
+        id: key,
+        teamName: event.teamName,
+        name: event.agentName,
+        agentType: event.agentType,
+        status: event.status,
+        activity: event.activity,
+        prompt: event.prompt ?? existing?.prompt,
+        output: event.output ?? existing?.output,
+        error: event.error ?? existing?.error,
+        toolUseCount: event.toolUseCount,
+        sent,
+        received: Math.max(existing?.received ?? 0, received),
+        createdAt: existing?.createdAt ?? event.createdAt,
+        updatedAt: event.updatedAt,
+        completedAt: event.completedAt ?? existing?.completedAt,
+        age: formatSwarmAgentDuration(existing?.createdAt ?? event.createdAt, event.completedAt, event.status),
+      }
+      if (!existing) return [...prev, next]
+      return prev.map(agent => agent.id === key ? next : agent)
+    })
+
+    const taskId = swarmTaskIds.current.get(key)
+    if (taskId) {
+      const status = event.status === 'completed'
+        ? 'completed'
+        : event.status === 'failed'
+          ? 'failed'
+          : 'running'
+      const current = taskRegistry.get(taskId)
+      const updated = taskRegistry.update(taskId, {
+        status,
+        activity: event.activity,
+        output: event.output ?? event.error ?? current?.output,
+        completedAt: event.completedAt,
+      })
+      if (updated) {
+        setTasks(taskItemsFromRegistry(taskRegistry))
+        void sessionStore.append(agentState.current.sessionId, {
+          type: 'task_state',
+          task: toTaskItem(updated),
+        })
+      }
     }
   }
 
@@ -939,6 +1052,8 @@ export function App({ args, cwd }: AppProps) {
         provider={config.providerLabel}
         selectedId={selectedTaskId}
         detailId={detailTaskId}
+        swarmAgents={swarmAgents}
+        swarmMessages={swarmMessages}
       />
     )
   }
@@ -1169,6 +1284,15 @@ function getAgentToolInput(input: unknown) {
 function formatTaskDuration(task: TaskState) {
   const end = task.completedAt ?? (task.status === 'running' ? Date.now() : task.updatedAt)
   const seconds = Math.max(0, Math.floor((end - task.createdAt) / 1000))
+  if (seconds < 60) return `${seconds}s`
+  const minutes = Math.floor(seconds / 60)
+  if (minutes < 60) return `${minutes}m`
+  return `${Math.floor(minutes / 60)}h`
+}
+
+function formatSwarmAgentDuration(createdAt: number, completedAt: number | undefined, status: SwarmAgentItem['status']) {
+  const end = completedAt ?? (status === 'completed' || status === 'failed' ? Date.now() : Date.now())
+  const seconds = Math.max(0, Math.floor((end - createdAt) / 1000))
   if (seconds < 60) return `${seconds}s`
   const minutes = Math.floor(seconds / 60)
   if (minutes < 60) return `${minutes}m`
