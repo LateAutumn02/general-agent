@@ -27,6 +27,7 @@ export function PromptInput({
 
   useInput((input, key) => {
     if (disabled) return
+    if (isMouseSequence(input)) return
     if (key.return) {
       onSubmit(value, mode)
       setValue('')
@@ -61,4 +62,13 @@ export function PromptInput({
       </Text>
     </Box>
   )
+}
+
+function isMouseSequence(input: string) {
+  return input.includes('\x1b[<')
+    || input.includes('\x1b[M')
+    || input.includes('[<')
+    || input.includes('[M')
+    || /\[<[^;]{1,12};\d+;\d+[mM]/.test(input)
+    || /\x1b\[M[\s\S]{3}/.test(input)
 }
