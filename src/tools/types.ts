@@ -40,6 +40,8 @@ export type ToolContext = {
   signal: AbortSignal
   sessionId: string
   emit: RuntimeEventSink
+  /** Agent tool: run a sub-agent turn and return the response text */
+  runSubAgent?: (opts: { description: string; prompt: string; model: string }) => Promise<string>
 }
 
 export type ToolDefinition<TInput = unknown> = {

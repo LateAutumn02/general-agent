@@ -1,3 +1,4 @@
+import { agentTool } from './tools/agent.js'
 import { bashTool } from './tools/bash.js'
 import { editTool } from './tools/edit.js'
 import { globTool } from './tools/glob.js'
@@ -25,7 +26,7 @@ export class ToolRegistry {
 
 export function createDefaultToolRegistry() {
   const registry = new ToolRegistry()
-  const tools = [bashTool, readTool, writeTool, editTool, globTool, grepTool]
+  const tools = [bashTool, readTool, writeTool, editTool, globTool, grepTool, agentTool]
   if (process.platform === 'win32') tools.push(powerShellTool)
   for (const tool of tools) {
     registry.register(tool)

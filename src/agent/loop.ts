@@ -58,6 +58,7 @@ export async function* runAgentTurn(options: RunTurnOptions): AsyncIterable<Runt
       permissionController,
       sessionStore,
       signal,
+      modelClient,
       decidePermission: options.decidePermission,
     })
     state.turnCount += 1
@@ -109,6 +110,7 @@ export async function* runAgentTurn(options: RunTurnOptions): AsyncIterable<Runt
         permissionController,
         sessionStore,
         signal,
+        modelClient,
         decidePermission: options.decidePermission,
       })
     }
@@ -131,6 +133,7 @@ type ExecuteToolCallOptions = {
   permissionController: PermissionController
   sessionStore?: JsonlSessionStore
   signal: AbortSignal
+  modelClient: ModelClient
   decidePermission?: (event: Extract<RuntimeEvent, { type: 'permission_request' }>) => Promise<PermissionDecision>
 }
 
@@ -142,6 +145,7 @@ async function* executeToolCall(options: ExecuteToolCallOptions): AsyncIterable<
     permissionController,
     sessionStore,
     signal,
+    modelClient,
     decidePermission,
   } = options
   const tool = toolRegistry.get(call.name)
@@ -160,6 +164,26 @@ async function* executeToolCall(options: ExecuteToolCallOptions): AsyncIterable<
     signal,
     sessionId: state.sessionId,
     emit: () => {},
+    async runSubAgent(opts) {
+      // Run a sub-agent turn: send the prompt to the model and collect response
+      const subMessages = [
+        { id: crypto.randomUUID(), role: 'system' as const, text: `You are a sub-agent. ${opts.description}. Respond concisely.`, createdAt: Date.now() },
+        { id: crypto.randomUUID(), role: 'user' as const, text: opts.prompt, createdAt: Date.now() },
+      ]
+      let response = ''
+      for await (const event of modelClient.stream({
+        model: opts.model === 'inherit' ? state.model : opts.model,
+        messages: subMessages,
+        cwd: state.cwd,
+        tools: [],
+        systemAdditions: [],
+      }, signal)) {
+        if (event.type === 'text_delta') {
+          response += event.text
+        }
+      }
+      return response.trim() || '(agent returned no response)'
+    },
   }
   const permission = await permissionController.evaluate(tool, call.input, context)
   if (permission.type === 'deny') {

@@ -36,11 +36,6 @@ export const SLASH_COMMANDS: SlashCommand[] = [
     description: 'Compact old conversation history.',
   },
   {
-    name: 'swarm',
-    usage: '/swarm <goal>',
-    description: 'Create background agent tasks.',
-  },
-  {
     name: 'help',
     usage: '/help',
     description: 'Show available slash commands.',

@@ -17,8 +17,6 @@ import type { RuntimeEvent } from '../runtime/events.js'
 import { JsonlSessionStore } from '../session/store.js'
 import type { ChatMessage, SessionRecord } from '../session/types.js'
 import { loadDefaultSkills } from '../skills/loader.js'
-import { MultiAgentManager } from '../multi-agent/manager.js'
-import { createSwarmPlanFromGoal } from '../swarm/planner.js'
 import { TaskRegistry } from '../tasks/registry.js'
 import type { TaskState } from '../tasks/types.js'
 import { Footer } from './components/Footer.js'
@@ -31,7 +29,7 @@ import { TaskBoard } from './components/TaskBoard.js'
 import { Transcript } from './components/Transcript.js'
 import { createInitialTranscript } from './mockRuntime.js'
 import { SLASH_COMMANDS, formatSlashCommandHelp } from './slashCommands.js'
-import type { PermissionDecision, PermissionRequest, PromptMode, TaskItem, TranscriptItem } from './types.js'
+import type { AgentPill, PermissionDecision, PermissionRequest, PromptMode, TaskItem, TranscriptItem } from './types.js'
 
 type AppProps = {
   args: string[]
@@ -68,6 +66,23 @@ export function App({ args, cwd }: AppProps) {
   resumeViewRef.current = resumeView
   const taskRegistry = useMemo(() => createInitialTaskRegistry(), [])
   const [tasks, setTasks] = useState<TaskItem[]>(() => taskItemsFromRegistry(taskRegistry))
+  // Compute agent pills for footer display
+  const agentPills = useMemo<AgentPill[]>(() => {
+    const agentTasks = taskRegistry.list().filter(t => t.type === 'agent')
+    if (agentTasks.length === 0) return []
+    const pills: AgentPill[] = [{ name: 'main', color: 'yellow', isMain: true, isSelected: false }]
+    const colors: AgentPill['color'][] = ['cyan', 'green', 'magenta', 'blue', 'red']
+    for (let i = 0; i < agentTasks.length; i++) {
+      const t = agentTasks[i]!
+      pills.push({
+        name: t.title.length > 12 ? t.title.slice(0, 11) : t.title,
+        color: colors[i % colors.length]!,
+        isMain: false,
+        isSelected: false,
+      })
+    }
+    return pills
+  }, [tasks])
   const config = useMemo(() => loadRuntimeConfig(args, cwd), [args, cwd])
   const [currentModel, setCurrentModel] = useState(config.model)
   const [items, setItems] = useState<TranscriptItem[]>(() => createInitialTranscript(config.providerLabel, config.model))
@@ -82,6 +97,10 @@ export function App({ args, cwd }: AppProps) {
   })
   const pendingPermission = useRef<PendingPermission | undefined>(undefined)
   const activeTurnController = useRef<AbortController | undefined>(undefined)
+  // Tool call collapsing: track consecutive calls of the same type
+  const toolGroup = useRef<{ name: string; count: number; lastId: string } | null>(null)
+  // Map callId → tool name for detecting Agent tool results
+  const toolCallNames = useRef<Map<string, string>>(new Map())
   const sessionStore = useMemo(() => new JsonlSessionStore(join(cwd, '.general-agent', 'sessions')), [cwd])
 
   // ---- Session initialization (--resume / --continue) ----
@@ -200,12 +219,12 @@ export function App({ args, cwd }: AppProps) {
       return
     }
 
-    if (key.leftArrow) {
+    if (key.leftArrow || (typeof input === 'string' && input.includes('\x1b[D'))) {
       setView('tasks')
       setSelectedTaskId(prev => prev ?? taskRegistry.list()[0]?.id)
       return
     }
-    if (key.rightArrow) {
+    if (key.rightArrow || (typeof input === 'string' && input.includes('\x1b[C'))) {
       setView('chat')
       setDetailTaskId(undefined)
       return
@@ -359,11 +378,6 @@ export function App({ args, cwd }: AppProps) {
       return
     }
 
-    if (trimmed.startsWith('/swarm ')) {
-      await handleSwarmCommand(trimmed)
-      return
-    }
-
     if (trimmed === '/compact') {
       const result = compactMessages({
         messages: agentState.current.messages,
@@ -473,37 +487,6 @@ export function App({ args, cwd }: AppProps) {
         type: 'tool_summary',
         id: crypto.randomUUID(),
         text: `Switched model to ${nextModel}`,
-        status: 'completed',
-      },
-    ])
-  }
-
-  async function handleSwarmCommand(command: string) {
-    const goal = command.slice('/swarm '.length).trim()
-    if (!goal) return
-    const plan = createSwarmPlanFromGoal(goal)
-    const manager = new MultiAgentManager(taskRegistry)
-    const agentTasks = plan.members.map(member => manager.createAgentTask({
-      description: `${member.profile.name}: ${goal}`,
-      prompt: member.prompt,
-      profile: member.profile.name,
-      allowedTools: member.profile.allowedTools,
-    }, agentState.current.sessionId))
-    for (const task of agentTasks) {
-      await sessionStore.append(agentState.current.sessionId, {
-        type: 'task_state',
-        task: toTaskItem(task),
-      })
-    }
-    setSelectedTaskId(agentTasks[0]?.id)
-    setTasks(taskItemsFromRegistry(taskRegistry))
-    setItems(prev => [
-      ...prev,
-      { type: 'user', id: crypto.randomUUID(), text: command },
-      {
-        type: 'tool_summary',
-        id: crypto.randomUUID(),
-        text: `Created swarm plan for "${goal}":\n${agentTasks.map(task => `- ${task.profile.name}: ${task.prompt}`).join('\n')}`,
         status: 'completed',
       },
     ])
@@ -739,42 +722,83 @@ export function App({ args, cwd }: AppProps) {
 
   function applyRuntimeEvent(event: RuntimeEvent) {
     if (event.type === 'model_request_started') {
+      // Flush pending tool group before continuing
+      flushToolGroup()
       if (event.afterTool) {
         setItems(prev => [
           ...prev,
-          {
-            type: 'tool_summary',
-            id: crypto.randomUUID(),
-            text: 'Continuing after tool result',
-            status: 'running',
-          },
+          { type: 'tool_summary', id: crypto.randomUUID(), text: 'Continuing after tool result', status: 'running' },
         ])
       }
     } else if (event.type === 'assistant_delta') {
       appendAssistantDelta(event.messageId, event.text)
     } else if (event.type === 'tool_call_started') {
-      setItems(prev => [
-        ...prev,
-        {
-          type: 'tool_summary',
-          id: crypto.randomUUID(),
-          text: `Running ${event.call.name}`,
-          status: 'running',
-        },
-      ])
+      const name = event.call.name
+      toolCallNames.current.set(event.call.id, name)
+      const g = toolGroup.current
+      if (g && g.name === name) {
+        // Update existing collapsed group
+        g.count++
+        setItems(prev => prev.map(item =>
+          item.type === 'tool_group' && item.id === g.lastId
+            ? { ...item, count: g!.count, summary: `${g!.count} ${g!.name} calls` }
+            : item,
+        ))
+      } else {
+        // Flush previous group, start new one
+        flushToolGroup()
+        const id = crypto.randomUUID()
+        toolGroup.current = { name, count: 1, lastId: id }
+        setItems(prev => [
+          ...prev,
+          { type: 'tool_group', id, toolName: name, count: 1, summary: `Running ${name}`, status: 'running' },
+        ])
+      }
     } else if (event.type === 'tool_call_finished') {
-      setItems(prev => [
-        ...prev,
-        {
-          type: event.result.ok ? 'tool_summary' : 'error',
-          id: crypto.randomUUID(),
-          text: event.result.ok ? summarizeToolResult(event.result.content) : event.result.error ?? event.result.content,
-          status: event.result.ok ? 'completed' : undefined as never,
-        },
-      ])
+      flushToolGroup()
+      const toolName = toolCallNames.current.get(event.callId) ?? ''
+      if (toolName === 'Agent' && event.result.ok) {
+        // Agent tool finished — show agent_progress item with first line of response
+        const content = event.result.content
+        const firstLine = content.split('\n')[0]?.slice(0, 80) ?? 'Agent completed'
+        setItems(prev => [
+          ...prev,
+          {
+            type: 'agent_progress',
+            id: crypto.randomUUID(),
+            agents: [{
+              agentId: event.callId,
+              agentType: 'Agent',
+              description: firstLine,
+              status: 'completed',
+              toolUseCount: 0,
+              tokenCount: 0,
+              durationMs: 0,
+              isBackground: false,
+            }],
+            status: 'completed',
+          },
+        ])
+      } else if (event.result.ok) {
+        setItems(prev => [...prev, { type: 'tool_summary', id: crypto.randomUUID(), text: summarizeToolResult(event.result.content), status: 'completed' as const }])
+      } else {
+        setItems(prev => [...prev, { type: 'error', id: crypto.randomUUID(), text: event.result.error ?? event.result.content }])
+      }
     } else if (event.type === 'error') {
       setItems(prev => [...prev, { type: 'error', id: crypto.randomUUID(), text: event.error }])
     }
+  }
+
+  function flushToolGroup() {
+    const g = toolGroup.current
+    if (!g) return
+    // Mark the collapsed group as completed
+    setItems(prev => prev.map(item =>
+      item.type === 'tool_group' && item.id === g.lastId
+        ? { ...item, status: 'completed' as const, summary: `${g.count} ${g.name} calls` }
+        : item,
+    ))
+    toolGroup.current = null
   }
 
   function appendAssistantDelta(messageId: string, text: string) {
@@ -897,7 +921,7 @@ export function App({ args, cwd }: AppProps) {
           onSubmit={submit}
         />
       )}
-      <Footer cwd={cwd} model={currentModel} provider={config.providerLabel} mode={inputMode} />
+      <Footer cwd={cwd} model={currentModel} provider={config.providerLabel} mode={inputMode} agentPills={agentPills} />
     </Box>
   )
 
