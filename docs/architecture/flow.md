@@ -1,6 +1,6 @@
 # 系统架构流程
 
-> 最后更新：2026-06-17 | 参考：legacy/python/docs/architecture, reference/cc-haha/src
+> 最后更新：2026-06-17
 
 ## 阶段1：进程启动
 
@@ -37,5 +37,5 @@
 ## 差异说明
 
 - Python 版把 agent、工具和 Textual UI 紧耦合在一个进程内；TS 版改成事件驱动，UI 只消费事件。
-- cc-haha 有桌面端、IM、远程通道等能力；本项目 v1 只做终端体验。
+- 后续桌面端、IM、远程通道等能力不在本项目 v1 范围内；本项目 v1 只做终端体验。
 

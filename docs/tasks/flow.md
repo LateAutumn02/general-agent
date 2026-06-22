@@ -1,6 +1,6 @@
 # 后台任务流程
 
-> 最后更新：2026-06-17 | 参考：legacy/python/docs/multi-task, reference/cc-haha/src/tasks/LocalShellTask
+> 最后更新：2026-06-17
 
 ## 阶段1：任务创建
 

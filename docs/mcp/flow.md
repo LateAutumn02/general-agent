@@ -1,6 +1,6 @@
 # MCP 流程
 
-> 最后更新：2026-06-17 | 参考：legacy/python/docs/mcp, reference/cc-haha/src/services
+> 最后更新：2026-06-17
 
 ## 阶段1：加载配置
 

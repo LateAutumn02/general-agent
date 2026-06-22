@@ -23,7 +23,7 @@ const ctx = { cwd: process.cwd(), signal: new AbortController().signal, sessionI
 const call = { id: 'call-1', name: 'Agent', input: valid, status: 'pending' as const, createdAt: Date.now() }
 const result = await agentTool.execute(valid, ctx, call)
 if (!result.ok) throw new Error('FAIL: execution not ok')
-if (!result.content.includes('Agent task created')) throw new Error('FAIL: missing task created message')
+if (!result.content.includes('Agent task queued')) throw new Error('FAIL: missing task queued message')
 if (!result.content.includes('Security audit')) throw new Error('FAIL: missing description in result')
 console.log('PASS [3/7] Single Agent execution')
 

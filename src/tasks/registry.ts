@@ -23,7 +23,16 @@ export class TaskRegistry {
   update(id: string, patch: Partial<Omit<TaskState, 'id' | 'createdAt'>>) {
     const current = this.tasks.get(id)
     if (!current) return undefined
-    const next = { ...current, ...patch, updatedAt: Date.now() }
+    const now = Date.now()
+    const terminal = patch.status === 'completed'
+      || patch.status === 'failed'
+      || patch.status === 'cancelled'
+    const next = {
+      ...current,
+      ...patch,
+      completedAt: terminal ? patch.completedAt ?? current.completedAt ?? now : patch.completedAt ?? current.completedAt,
+      updatedAt: now,
+    }
     this.tasks.set(id, next)
     return next
   }

@@ -1,6 +1,6 @@
 # 会话持久化流程
 
-> 最后更新：2026-06-22 | 参考：reference/cc-haha/src/utils/sessionStorage.ts, sessionRestore.ts, commands/resume/resume.tsx, components/LogSelector.tsx
+> 最后更新：2026-06-22
 
 ## 阶段1：会话创建
 
@@ -12,7 +12,7 @@
 
 3. **文件路径格式**：
    ```
-   ~/.claude/projects/<sanitized_cwd>/<sessionId>.jsonl
+   .general-agent/sessions/<sanitized_cwd>/<sessionId>.jsonl
    ```
    - `sanitized_cwd` 将路径中的非字母数字字符替换为 `-`（如 `/Users/foo/my-project` → `-Users-foo-my-project`）。
    - 超长路径（>200 字符）截断并追加 hash 后缀以保证唯一性。
@@ -72,7 +72,7 @@
 
 ### 3a. 获取 lite 会话文件列表
 
-1. **`getSessionFilesLite(projectDir)`** — 扫描 `~/.claude/projects/<sanitized_cwd>/` 下所有 `.jsonl` 文件。
+1. **`getSessionFilesLite(projectDir)`** — 扫描 `.general-agent/sessions/<sanitized_cwd>/` 下所有 `.jsonl` 文件。
 2. 对每个文件 stat 获取 `mtime`（修改时间）和 `size`（文件大小），返回 `LogOption[]`。
 3. 此步骤**不读取文件内容**，速度极快。
 
@@ -193,7 +193,7 @@
 4. 找到 → `loadFullLog()` → 直接恢复（跳过选择器 UI）。
 5. 未找到 → **回退查找**：`getLastSessionLog(uuid)` 直接从磁盘文件查找。
    - 这是为了处理被 `enrichLogs` 丢弃的会话（例如首条消息 >16KB 导致 firstPrompt 提取失败）。
-   - 从 `~/.claude/projects/*/` 下所有项目目录中搜索 `<uuid>.jsonl`。
+   - 从 `.general-agent/sessions/*/` 下所有项目目录中搜索 `<uuid>.jsonl`。
 6. 仍未找到 → 显示 `"Session <uuid> was not found."`。
 
 ### 路径C：标题参数 — 精确匹配
@@ -316,7 +316,7 @@ general-agent --resume <uuid>
 
 ## v1 实现范围
 
-v1 必须先完成以下核心功能，体验与 cc-haha 保持一致：
+v1 必须先完成以下核心功能，体验保持一致：
 
 1. ✅ JSONL 追加写存储。
 2. ✅ `/resume`（无参数）显示会话列表选择器。

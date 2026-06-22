@@ -1,6 +1,6 @@
 # 沙箱安全流程
 
-> 最后更新：2026-06-17 | 参考：legacy/python/docs/sandbox, reference/cc-haha/src/utils/permissions
+> 最后更新：2026-06-17
 
 ## 阶段1：安全边界建立
 

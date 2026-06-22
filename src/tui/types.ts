@@ -15,7 +15,7 @@ export type PermissionDecision =
   | { type: 'allow'; remember: true }
   | { type: 'deny'; reason?: string }
 
-export type TaskStatus = 'awaiting_input' | 'running' | 'completed'
+export type TaskStatus = 'awaiting_input' | 'running' | 'completed' | 'failed' | 'cancelled'
 
 export type TaskItem = {
   id: string

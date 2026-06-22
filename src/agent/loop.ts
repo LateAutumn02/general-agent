@@ -5,7 +5,7 @@ import type { ChatMessage } from '../session/types.js'
 import type { RuntimeEvent } from '../runtime/events.js'
 import { buildRuntimeSystemAdditions } from '../runtime/context.js'
 import { runTool } from '../tools/runTool.js'
-import { createDefaultToolRegistry, ToolRegistry } from '../tools/registry.js'
+import { createDefaultToolRegistry, createSubAgentToolRegistry, ToolRegistry } from '../tools/registry.js'
 import type { ToolContext } from '../tools/types.js'
 import type { ToolCall } from '../tools/types.js'
 import { validateToolInput } from '../tools/validate.js'
@@ -19,6 +19,7 @@ export type RunTurnOptions = {
   permissionController?: PermissionController
   sessionStore?: JsonlSessionStore
   signal?: AbortSignal
+  toolContext?: Pick<ToolContext, 'agentName' | 'teamName'>
   decidePermission?: (event: Extract<RuntimeEvent, { type: 'permission_request' }>) => Promise<PermissionDecision>
 }
 
@@ -59,6 +60,7 @@ export async function* runAgentTurn(options: RunTurnOptions): AsyncIterable<Runt
       sessionStore,
       signal,
       modelClient,
+      toolContext: options.toolContext,
       decidePermission: options.decidePermission,
     })
     state.turnCount += 1
@@ -72,16 +74,17 @@ export async function* runAgentTurn(options: RunTurnOptions): AsyncIterable<Runt
     const pendingToolCalls: ToolCall[] = []
 
     yield { type: 'model_request_started', step, afterTool: step > 0 }
-    for await (const event of modelClient.stream({
-      model: state.model,
-      messages: state.messages,
-      cwd: state.cwd,
-      tools: toolRegistry.list(),
-      systemAdditions,
-    }, signal)) {
-      if (event.type === 'text_delta') {
-        assistantText += event.text
-        yield { type: 'assistant_delta', text: event.text, messageId: assistantId }
+    try {
+      for await (const event of modelClient.stream({
+        model: state.model,
+        messages: state.messages,
+        cwd: state.cwd,
+        tools: toolRegistry.list(),
+        systemAdditions,
+      }, signal)) {
+        if (event.type === 'text_delta') {
+          assistantText += event.text
+          yield { type: 'assistant_delta', text: event.text, messageId: assistantId }
         continue
       }
 
@@ -89,17 +92,30 @@ export async function* runAgentTurn(options: RunTurnOptions): AsyncIterable<Runt
         pendingToolCalls.push(event.call)
       }
     }
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err)
+      process.stderr.write(`\n[LOOP] Model stream error: ${msg}\n`)
+      yield { type: 'error', error: msg }
+      break
+    }
 
-    if (assistantText) {
+    if (assistantText || pendingToolCalls.length > 0) {
       const assistantMessage: ChatMessage = {
         id: assistantId,
         role: 'assistant',
         text: assistantText,
         createdAt: Date.now(),
+        toolCalls: pendingToolCalls.map(call => ({
+          id: call.id,
+          name: call.name,
+          input: call.input,
+        })),
       }
       state.messages.push(assistantMessage)
       await sessionStore?.append(state.sessionId, { type: 'message', message: assistantMessage })
-      yield { type: 'assistant_done', text: assistantText, messageId: assistantId }
+      if (assistantText) {
+        yield { type: 'assistant_done', text: assistantText, messageId: assistantId }
+      }
     }
 
     for (const call of pendingToolCalls) {
@@ -111,6 +127,7 @@ export async function* runAgentTurn(options: RunTurnOptions): AsyncIterable<Runt
         sessionStore,
         signal,
         modelClient,
+        toolContext: options.toolContext,
         decidePermission: options.decidePermission,
       })
     }
@@ -134,6 +151,7 @@ type ExecuteToolCallOptions = {
   sessionStore?: JsonlSessionStore
   signal: AbortSignal
   modelClient: ModelClient
+  toolContext?: Pick<ToolContext, 'agentName' | 'teamName'>
   decidePermission?: (event: Extract<RuntimeEvent, { type: 'permission_request' }>) => Promise<PermissionDecision>
 }
 
@@ -146,11 +164,14 @@ async function* executeToolCall(options: ExecuteToolCallOptions): AsyncIterable<
     sessionStore,
     signal,
     modelClient,
+    toolContext,
     decidePermission,
   } = options
   const tool = toolRegistry.get(call.name)
   if (!tool) {
-    yield { type: 'error', error: `Unknown tool: ${call.name}` }
+    const msg = `Unknown tool: ${call.name}`
+    process.stderr.write(`\n[LOOP] ${msg}\n`)
+    yield { type: 'error', error: msg }
     return
   }
   const validationErrors = validateToolInput(tool.inputSchema, call.input)
@@ -163,26 +184,54 @@ async function* executeToolCall(options: ExecuteToolCallOptions): AsyncIterable<
     cwd: state.cwd,
     signal,
     sessionId: state.sessionId,
+    agentName: toolContext?.agentName,
+    teamName: toolContext?.teamName,
     emit: () => {},
     async runSubAgent(opts) {
-      // Run a sub-agent turn: send the prompt to the model and collect response
-      const subMessages = [
-        { id: crypto.randomUUID(), role: 'system' as const, text: `You are a sub-agent. ${opts.description}. Respond concisely.`, createdAt: Date.now() },
-        { id: crypto.randomUUID(), role: 'user' as const, text: opts.prompt, createdAt: Date.now() },
-      ]
-      let response = ''
-      for await (const event of modelClient.stream({
-        model: opts.model === 'inherit' ? state.model : opts.model,
-        messages: subMessages,
+      const subState: AgentState = {
+        sessionId: `${state.sessionId}:${opts.agentName ?? crypto.randomUUID()}`,
+        messages: [{
+          id: crypto.randomUUID(),
+          role: 'system',
+          text: [
+            `You are sub-agent ${opts.agentName ?? 'worker'}${opts.teamName ? ` in team ${opts.teamName}` : ''}.`,
+            opts.description,
+            'Use the available tools when needed.',
+            'If asked to message another teammate, call SendMessage in this same turn.',
+            'Do not merely describe a plan when a tool call is required.',
+          ].join('\n'),
+          createdAt: Date.now(),
+        }],
+        turnCount: 0,
         cwd: state.cwd,
-        tools: [],
-        systemAdditions: [],
-      }, signal)) {
-        if (event.type === 'text_delta') {
-          response += event.text
+        model: opts.model === 'inherit' ? state.model : opts.model,
+      }
+      let lastAssistant = ''
+      const toolResults: string[] = []
+      for await (const event of runAgentTurn({
+        state: subState,
+        request: {
+          id: crypto.randomUUID(),
+          mode: 'prompt',
+          text: opts.prompt,
+          createdAt: Date.now(),
+        },
+        modelClient,
+        toolRegistry: createSubAgentToolRegistry(opts.agentType),
+        permissionController: new PermissionController('bypassPermissions'),
+        signal,
+        toolContext: {
+          agentName: opts.agentName,
+          teamName: opts.teamName,
+        },
+      })) {
+        if (event.type === 'assistant_done') {
+          lastAssistant = event.text
+        } else if (event.type === 'tool_call_finished') {
+          toolResults.push(`${event.result.ok ? 'OK' : 'FAIL'} ${event.result.content}`)
         }
       }
-      return response.trim() || '(agent returned no response)'
+      return [lastAssistant.trim(), ...toolResults].filter(Boolean).join('\n\n') || '(agent returned no response)'
     },
   }
   const permission = await permissionController.evaluate(tool, call.input, context)
@@ -220,6 +269,8 @@ async function* executeToolCall(options: ExecuteToolCallOptions): AsyncIterable<
     role: 'tool',
     text: `${call.name} result:\n${result.content}`,
     createdAt: Date.now(),
+    toolCallId: call.id,
+    toolName: call.name,
   }
   state.messages.push(toolMessage)
   await sessionStore?.append(state.sessionId, { type: 'message', message: toolMessage })

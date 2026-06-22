@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react'
-import { Box, Text, useInput } from 'ink'
+import { Box, Text, useInput, useStdout } from 'ink'
 import chalk from 'chalk'
 import type { SessionRecord } from '../../session/types.js'
 import { Spinner } from './Spinner.js'
@@ -13,64 +13,86 @@ export type LogSelectorProps = {
 
 export function LogSelector({ logs, loading, onSelect, onCancel }: LogSelectorProps) {
   const [selectedIndex, setSelectedIndex] = useState(0)
+  const [scrollOffset, setScrollOffset] = useState(0)
+  const { stdout } = useStdout()
+  // Each item takes 2 lines (id + title), plus header = 3 lines, minus padding
+  const viewportRows = Math.max(5, (stdout?.rows ?? 30) - 6)
+  const visibleCount = Math.floor(viewportRows / 2)
 
   useEffect(() => {
     setSelectedIndex(0)
+    setScrollOffset(0)
   }, [logs])
+
+  // Auto-scroll: keep selected item visible (only on selectedIndex change)
+  useEffect(() => {
+    setScrollOffset(prev => {
+      if (selectedIndex < prev) return selectedIndex
+      if (selectedIndex >= prev + visibleCount) return selectedIndex - visibleCount + 1
+      return prev
+    })
+  }, [selectedIndex, visibleCount])
 
   useInput((input, key) => {
     if (loading || logs.length === 0) return
     const rawKey = key as Record<string, unknown>
-    const isUp = rawKey.upArrow || input === 'k' || (typeof input === 'string' && input.includes('\x1b[A')) || rawKey.wheelUp
-    const isDown = rawKey.downArrow || input === 'j' || (typeof input === 'string' && input.includes('\x1b[B')) || rawKey.wheelDown
+
+    // Arrow keys + j/k = move selection
+    const isUp = rawKey.upArrow || input === 'k' || (typeof input === 'string' && input.includes('\x1b[A'))
+    const isDown = rawKey.downArrow || input === 'j' || (typeof input === 'string' && input.includes('\x1b[B'))
+
     if (isUp) { setSelectedIndex(prev => Math.max(0, prev - 1)); return }
     if (isDown) { setSelectedIndex(prev => Math.min(logs.length - 1, prev + 1)); return }
+
+    // Wheel = scroll (not select)
+    if (rawKey.wheelUp || (typeof input === 'string' && input.includes('\x1b[M'))) {
+      const wheelDir = getWheelDirection(input, rawKey)
+      if (wheelDir === 'up') setScrollOffset(prev => Math.max(0, prev - 3))
+      if (wheelDir === 'down') setScrollOffset(prev => Math.min(Math.max(0, logs.length - visibleCount), prev + 3))
+      return
+    }
+
     if (rawKey.return) { const s = logs[Math.min(selectedIndex, logs.length - 1)]; if (s) onSelect(s); return }
     if (rawKey.escape) { onCancel(); return }
   })
 
   if (loading) {
-    return (
-      <Box paddingX={1} paddingY={1}>
-        <Spinner />
-        <Text> Loading conversations…</Text>
-      </Box>
-    )
+    return <Box paddingX={1} paddingY={1}><Spinner /><Text> Loading conversations…</Text></Box>
   }
 
   if (logs.length === 0) {
     return <Text>No conversations found to resume. Press Esc to go back.</Text>
   }
 
-  const visible = logs.slice(0, 20)
-  const lines: string[] = []
-
-  lines.push(chalk.hex('#F6D58B').bold('Recent conversations') + '  (arrows/jk navigate, Enter select, Esc cancel)')
-  lines.push('')
+  const maxOffset = Math.max(0, logs.length - visibleCount)
+  const safeOffset = Math.min(scrollOffset, maxOffset)
+  const visible = logs.slice(safeOffset, safeOffset + visibleCount)
 
   const gold = chalk.hex('#F6D58B')
   const white = chalk.hex('#E6E6E6')
+  const muted = chalk.hex('#807B6E')
+
+  const lines: string[] = []
+  lines.push(gold.bold('Recent conversations') + muted(`  (↑↓ select  wheel scroll  Enter open  Esc cancel)`))
+  if (safeOffset > 0) lines.push(muted(`  ... ${safeOffset} more above`))
 
   for (let i = 0; i < visible.length; i++) {
     const log = visible[i]!
-    const selected = i === selectedIndex
+    const actualIndex = safeOffset + i
+    const selected = actualIndex === selectedIndex
     const marker = selected ? gold.bold('▶') : ' '
     const id = (log.id ?? '').slice(0, 8)
     const count = log.messageCount ?? 0
     const time = formatDate(log.updatedAt ?? Date.now())
-    const title = log.firstPrompt || log.title || 'Untitled session'
+    const rawTitle = (log.firstPrompt || log.title || 'Untitled session').replace(/\s+/g, ' ').trim()
+    const title = rawTitle.length > 70 ? rawTitle.slice(0, 67) + '…' : rawTitle
 
-    const meta = `${id}  ${count}m  ${time}`
-    const metaColored = selected ? gold(meta) : meta
-    const titleColored = selected ? white(`  ${title}`) : `  ${title}`
-
-    lines.push(`${marker} ${metaColored}`)
-    lines.push(titleColored)
+    lines.push(selected ? gold(`${marker} ${id}  ${count}m  ${time}`) : `  ${id}  ${count}m  ${time}`)
+    lines.push(selected ? white(`  ${title}`) : muted(`  ${title}`))
   }
 
-  if (logs.length > 20) {
-    lines.push('')
-    lines.push(`...and ${logs.length - 20} more sessions`)
+  if (safeOffset + visibleCount < logs.length) {
+    lines.push(muted(`  ... ${logs.length - safeOffset - visibleCount} more below`))
   }
 
   return (
@@ -78,6 +100,19 @@ export function LogSelector({ logs, loading, onSelect, onCancel }: LogSelectorPr
       <Text>{lines.join('\n')}</Text>
     </Box>
   )
+}
+
+function getWheelDirection(input: string, key: Record<string, unknown>): 'up' | 'down' | undefined {
+  if (key.wheelUp === true) return 'up'
+  if (key.wheelDown === true) return 'down'
+  if (typeof input !== 'string') return undefined
+  // Parse mouse wheel escape sequences: \x1b[<64;...M (up) or \x1b[<65;...M (down)
+  const match = input.matchAll(/\x1b\[<(\d+);\d+;\d+[mM]/g)
+  for (const m of match) {
+    const code = Number(m[1])
+    if ((code & 64) === 64) return (code & 1) === 1 ? 'down' : 'up'
+  }
+  return undefined
 }
 
 function formatDate(ts: number): string {

@@ -26,6 +26,11 @@ export const SLASH_COMMANDS: SlashCommand[] = [
     description: 'List or restore saved sessions.',
   },
   {
+    name: 'permission',
+    usage: '/permission [mode]',
+    description: 'View or set permission mode (default/acceptEdits/bypassPermissions).',
+  },
+  {
     name: 'continue',
     usage: '/continue',
     description: 'Resume the most recent session.',

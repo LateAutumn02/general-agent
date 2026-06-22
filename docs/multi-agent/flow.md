@@ -1,6 +1,6 @@
 # 多 Agent 流程
 
-> 最后更新：2026-06-22 | 参考：reference/cc-haha/src/tools/AgentTool, spawnMultiAgent, coordinatorMode
+> 最后更新：2026-06-22
 
 ## 核心设计
 

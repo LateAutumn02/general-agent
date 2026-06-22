@@ -21,6 +21,7 @@ export const powerShellTool: ToolDefinition<PowerShellInput> = {
     }
   },
   async execute(input, context, call) {
+    let timeoutId: Timer | undefined
     const shell = process.platform === 'win32'
       ? ['powershell.exe', '-NoProfile', '-Command', input.command]
       : ['pwsh', '-NoProfile', '-Command', input.command]
@@ -30,18 +31,40 @@ export const powerShellTool: ToolDefinition<PowerShellInput> = {
       stderr: 'pipe',
       signal: context.signal,
     })
-    const [stdout, stderr, exitCode] = await Promise.all([
-      new Response(proc.stdout).text(),
-      new Response(proc.stderr).text(),
-      proc.exited,
-    ])
-    const ok = exitCode === 0
-    return {
-      callId: call.id,
-      ok,
-      content: ok ? stdout || '(command completed)' : stderr || stdout || `exit ${exitCode}`,
-      display: { type: 'command_output', stdout, stderr, exitCode },
-      error: ok ? undefined : stderr || `exit ${exitCode}`,
+
+    const timeout = new Promise<never>((_, reject) =>
+      timeoutId = setTimeout(() => {
+        proc.kill()
+        reject(new Error('Command timed out after 120s'))
+      }, 120_000),
+    )
+
+    try {
+      const [stdout, stderr, exitCode] = await Promise.race([
+        Promise.all([
+          new Response(proc.stdout).text(),
+          new Response(proc.stderr).text(),
+          proc.exited,
+        ]),
+        timeout,
+      ])
+      const ok = exitCode === 0
+      return {
+        callId: call.id,
+        ok,
+        content: ok ? stdout || '(command completed)' : stderr || stdout || `exit ${exitCode}`,
+        display: { type: 'command_output', stdout, stderr, exitCode },
+        error: ok ? undefined : stderr || `exit ${exitCode}`,
+      }
+    } catch (err) {
+      return {
+        callId: call.id,
+        ok: false,
+        content: err instanceof Error ? err.message : 'Command failed',
+        error: err instanceof Error ? err.message : String(err),
+      }
+    } finally {
+      if (timeoutId) clearTimeout(timeoutId)
     }
   },
   summarize(input, result) {

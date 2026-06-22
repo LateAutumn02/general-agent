@@ -1,6 +1,6 @@
 # 上下文压缩流程
 
-> 最后更新：2026-06-17 | 参考：legacy/python/docs/compact, reference/cc-haha/src/utils/collapseReadSearch.ts
+> 最后更新：2026-06-17
 
 ## 阶段1：预算检查
 

@@ -1,6 +1,6 @@
 # TUI 流程
 
-> 最后更新：2026-06-22 | 参考：reference/cc-haha/src/components/
+> 最后更新：2026-06-22
 
 ## 阶段1：渲染主界面
 

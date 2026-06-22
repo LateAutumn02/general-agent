@@ -1,6 +1,6 @@
 # 工具系统流程
 
-> 最后更新：2026-06-17 | 参考：legacy/python/docs/tools, reference/cc-haha/src/tools
+> 最后更新：2026-06-17
 
 ## 阶段1：工具注册
 

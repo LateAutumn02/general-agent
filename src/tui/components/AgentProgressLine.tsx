@@ -10,7 +10,6 @@ type Props = {
 
 /**
  * Agent 执行进度树形展示。
- * 对应 cc-haha 的 AgentProgressLine 组件。
  */
 export function AgentProgressLineView({ agents, status }: Props) {
   const gold = chalk.hex('#F6D58B')

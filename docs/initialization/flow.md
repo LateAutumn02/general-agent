@@ -1,6 +1,6 @@
 # 启动初始化流程
 
-> 最后更新：2026-06-17 | 参考：legacy/python/docs/initialization, reference/cc-haha/bin/claude-haha
+> 最后更新：2026-06-17
 
 ## 阶段1：入口选择
 

@@ -1,6 +1,6 @@
 # 多 Agent 数据结构
 
-> 最后更新：2026-06-22 | 参考：reference/cc-haha/src/tools/AgentTool, loadAgentsDir, agentToolUtils
+> 最后更新：2026-06-22
 
 ## 核心类型概览
 
@@ -79,7 +79,7 @@ type AgentResult = {
 
 ---
 
-## AgentDefinition（cc-haha 完整版）
+## AgentDefinition（扩展版）
 
 ```ts
 type AgentDefinition = {
@@ -209,7 +209,7 @@ type AgentTask = TaskState & {
 ## 子 Agent 转录存储
 
 ```
-~/.claude/
+.general-agent/
   projects/{sanitized_cwd}/
     {sessionId}.jsonl                      ← 主 agent 转录
     {sessionId}/

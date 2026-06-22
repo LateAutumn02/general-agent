@@ -28,6 +28,23 @@ type ChatCompletionChunk = {
   }
 }
 
+type OpenAIMessage =
+  | { role: 'system'; content: string }
+  | { role: 'user'; content: string }
+  | {
+    role: 'assistant'
+    content: string | null
+    tool_calls?: Array<{
+      id: string
+      type: 'function'
+      function: {
+        name: string
+        arguments: string
+      }
+    }>
+  }
+  | { role: 'tool'; tool_call_id: string; content: string }
+
 export class OpenAICompatibleModelClient implements ModelClient {
   constructor(private readonly options: OpenAICompatibleClientOptions) {}
 
@@ -53,7 +70,7 @@ export class OpenAICompatibleModelClient implements ModelClient {
         },
         body: JSON.stringify({
           model: request.model,
-          messages: toOpenAIMessages(request.messages, request.cwd, request.systemAdditions ?? []),
+          messages: toOpenAICompatibleMessages(request.messages, request.cwd, request.systemAdditions ?? []),
           tools: request.tools?.map(toOpenAITool),
           tool_choice: request.tools?.length ? 'auto' : undefined,
           stream: true,
@@ -82,19 +99,21 @@ export class OpenAICompatibleModelClient implements ModelClient {
             const event = parseSseLine(line)
             if (!event) continue
             if (event.error?.message) throw new Error(event.error.message)
-            const delta = event.choices?.[0]?.delta
-            const content = delta?.content
-            if (content) yield { type: 'text_delta', text: content }
-            for (const toolCall of delta?.tool_calls ?? []) {
-              const pending = pendingToolCalls.get(toolCall.index) ?? {
-                id: toolCall.id ?? crypto.randomUUID(),
-                name: '',
-                argumentsText: '',
+            for (const choice of event.choices ?? []) {
+              const delta = choice.delta
+              const content = delta?.content
+              if (content) yield { type: 'text_delta', text: content }
+              for (const toolCall of delta?.tool_calls ?? []) {
+                const pending = pendingToolCalls.get(toolCall.index) ?? {
+                  id: toolCall.id ?? crypto.randomUUID(),
+                  name: '',
+                  argumentsText: '',
+                }
+                pending.id = toolCall.id ?? pending.id
+                pending.name += toolCall.function?.name ?? ''
+                pending.argumentsText += toolCall.function?.arguments ?? ''
+                pendingToolCalls.set(toolCall.index, pending)
               }
-              pending.id = toolCall.id ?? pending.id
-              pending.name += toolCall.function?.name ?? ''
-              pending.argumentsText += toolCall.function?.arguments ?? ''
-              pendingToolCalls.set(toolCall.index, pending)
             }
           }
         }
@@ -135,7 +154,11 @@ type PendingToolCall = {
   argumentsText: string
 }
 
-function toOpenAIMessages(messages: ChatMessage[], cwd: string, systemAdditions: string[]) {
+export function toOpenAICompatibleMessages(
+  messages: ChatMessage[],
+  cwd: string,
+  systemAdditions: string[],
+): OpenAIMessage[] {
   return [
     {
       role: 'system',
@@ -149,11 +172,36 @@ function toOpenAIMessages(messages: ChatMessage[], cwd: string, systemAdditions:
         ...systemAdditions,
       ].join('\n'),
     },
-    ...messages.map(message => ({
-      role: normalizeRole(message.role),
-      content: message.role === 'tool' ? `Tool result:\n${message.text}` : message.text,
-    })),
+    ...messages.flatMap(toOpenAIMessage),
   ]
+}
+
+function toOpenAIMessage(message: ChatMessage): OpenAIMessage[] {
+  if (message.role === 'system') return [{ role: 'system', content: message.text }]
+  if (message.role === 'user') return [{ role: 'user', content: message.text }]
+  if (message.role === 'assistant') {
+    const toolCalls = message.toolCalls?.map(call => ({
+      id: call.id,
+      type: 'function' as const,
+      function: {
+        name: call.name,
+        arguments: JSON.stringify(call.input ?? {}),
+      },
+    }))
+    return [{
+      role: 'assistant',
+      content: message.text || null,
+      tool_calls: toolCalls && toolCalls.length > 0 ? toolCalls : undefined,
+    }]
+  }
+  if (message.role === 'tool' && message.toolCallId) {
+    return [{
+      role: 'tool',
+      tool_call_id: message.toolCallId,
+      content: message.text,
+    }]
+  }
+  return [{ role: 'user', content: `Tool result:\n${message.text}` }]
 }
 
 function toOpenAITool(tool: ToolDefinition) {
@@ -165,11 +213,6 @@ function toOpenAITool(tool: ToolDefinition) {
       parameters: tool.inputSchema,
     },
   }
-}
-
-function normalizeRole(role: ChatMessage['role']) {
-  if (role === 'assistant' || role === 'system') return role
-  return 'user'
 }
 
 function parseSseLine(line: string): ChatCompletionChunk | undefined {
