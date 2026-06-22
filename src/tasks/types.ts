@@ -14,6 +14,7 @@ export type TaskState = {
   output?: string
   createdAt: number
   updatedAt: number
+  completedAt?: number
 }
 
 export type CreateTaskInput = {

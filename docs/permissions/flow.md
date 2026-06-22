@@ -1,6 +1,6 @@
 # 权限审批流程
 
-> 最后更新：2026-06-17 | 参考：legacy/python/docs/sandbox, reference/cc-haha/src/components/permissions
+> 最后更新：2026-06-17
 
 ## 阶段1：权限请求生成
 

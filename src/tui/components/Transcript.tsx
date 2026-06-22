@@ -1,7 +1,7 @@
 import React from 'react'
 import { Box, Text, useStdout } from 'ink'
 import chalk from 'chalk'
-import type { ToolStatus, TranscriptItem } from '../types.js'
+import type { AgentProgressLine, TeammateMessageType, ToolStatus, TranscriptItem } from '../types.js'
 import { renderMarkdownLines, type MarkdownRenderLine } from '../markdown/blocks.js'
 
 type TranscriptProps = {
@@ -27,13 +27,17 @@ export function Transcript({ items, scrollBack = 0 }: TranscriptProps) {
 
 function colorizeLine(line: RenderLine): string {
   let text = line.text || ' '
-  if (line.color === '#F6D58B') text = chalk.hex('#F6D58B')(text)        // user (yellow)
-  else if (line.color === '#E6E6E6') text = chalk.hex('#E6E6E6')(text)  // assistant (white)
-  else if (line.color === '#9FCF9B') text = chalk.hex('#9FCF9B')(text)  // success/bash (green)
-  else if (line.color === '#FF6B6B') text = chalk.hex('#FF6B6B')(text)  // error (red)
-  else if (line.color === '#C3A6FF') text = chalk.hex('#C3A6FF')(text)  // accent (purple)
-  else if (line.color === '#807B6E') text = chalk.hex('#807B6E')(text)  // muted (gray-brown)
-  else if (line.color === '#5F5F5F') text = chalk.hex('#5F5F5F')(text)  // subtle (dark gray)
+  if (line.color === '#F6D58B') text = chalk.hex('#F6D58B')(text)
+  else if (line.color === '#E6E6E6') text = chalk.hex('#E6E6E6')(text)
+  else if (line.color === '#9FCF9B') text = chalk.hex('#9FCF9B')(text)
+  else if (line.color === '#FF6B6B') text = chalk.hex('#FF6B6B')(text)
+  else if (line.color === '#C3A6FF') text = chalk.hex('#C3A6FF')(text)
+  else if (line.color === '#807B6E') text = chalk.hex('#807B6E')(text)
+  else if (line.color === '#5F5F5F') text = chalk.hex('#5F5F5F')(text)
+  else if (line.color === '#00FFFF') text = chalk.hex('#00FFFF')(text)
+  else if (line.color === '#FF00FF') text = chalk.hex('#FF00FF')(text)
+  else if (line.color === '#0000FF') text = chalk.hex('#0000FF')(text)
+  else if (line.color === '#00FF00') text = chalk.hex('#00FF00')(text)
   if (line.bold) text = chalk.bold(text)
   return text
 }
@@ -51,18 +55,31 @@ function visibleLines(lines: RenderLine[], scrollBack: number, pageSize: number)
 function flattenTranscript(items: TranscriptItem[], columns: number) {
   const lines: RenderLine[] = []
   for (const item of items) {
-    const style = itemStyle(item)
-    pushWrapped(lines, style.label, style.labelColor, columns, true)
-    // Truncate tool output to avoid freezing on huge results (e.g. grep on large repos)
-    const text = item.type === 'tool_summary' && item.text.length > 500
-      ? item.text.slice(0, 500) + `... (${item.text.length} chars)`
-      : item.text
-    const bodyLines = renderMarkdownLines(text, {
-      color: style.textColor,
-      columns: columns - 2,
-    })
-    for (const line of bodyLines) {
-      pushWrapped(lines, `  ${line.text}`, line.color ?? style.textColor, columns, line.bold)
+    switch (item.type) {
+      case 'user':
+        pushLabel(lines, 'YOU', '#F6D58B', columns)
+        pushBody(lines, item.text, '#F6D58B', columns)
+        break
+      case 'assistant':
+        pushLabel(lines, 'AGENT', '#E6E6E6', columns)
+        pushBody(lines, item.text, '#E6E6E6', columns)
+        break
+      case 'tool_summary':
+        pushToolSummary(lines, item.text, item.status, columns)
+        break
+      case 'error':
+        pushLabel(lines, 'ERR', '#FF6B6B', columns)
+        pushBody(lines, item.text, '#FF6B6B', columns)
+        break
+      case 'tool_group':
+        pushToolGroup(lines, item.toolName, item.count, item.summary, item.status, columns)
+        break
+      case 'agent_progress':
+        pushAgentProgress(lines, item.agents, item.status, columns)
+        break
+      case 'teammate_message':
+        pushTeammateMessage(lines, item.from, item.color, item.messageType, item.summary, item.content, columns)
+        break
     }
     lines.push({ text: '', color: '#5F5F5F' })
   }
@@ -70,19 +87,71 @@ function flattenTranscript(items: TranscriptItem[], columns: number) {
   return lines
 }
 
-function itemStyle(item: TranscriptItem) {
-  if (item.type === 'user') {
-    return { label: 'YOU', labelColor: '#F6D58B', textColor: '#F6D58B' }
-  }
-  if (item.type === 'tool_summary') {
-    const color = toolStatusColor(item.status)
-    return { label: toolLabel(item.status), labelColor: color, textColor: '#807B6E' }
-  }
-  if (item.type === 'error') {
-    return { label: 'ERR', labelColor: '#FF6B6B', textColor: '#FF6B6B' }
-  }
-  return { label: 'AGENT', labelColor: '#E6E6E6', textColor: '#E6E6E6' }
+// ---- Item renderers ----
+
+function pushLabel(lines: RenderLine[], label: string, color: string, columns: number) {
+  pushWrapped(lines, label, color, columns, true)
 }
+
+function pushBody(lines: RenderLine[], text: string, color: string, columns: number) {
+  const truncated = text.length > 500 && !text.startsWith('Resumed')
+    ? text.slice(0, 500) + `... (${text.length} chars)`
+    : text
+  const bodyLines = renderMarkdownLines(truncated, { color, columns: columns - 2 })
+  for (const line of bodyLines) {
+    pushWrapped(lines, `  ${line.text}`, line.color ?? color, columns, line.bold)
+  }
+}
+
+function pushToolGroup(lines: RenderLine[], toolName: string, count: number, summary: string, status: ToolStatus, columns: number) {
+  const color = status === 'running' ? '#C3A6FF' : '#9FCF9B'
+  const icon = status === 'running' ? '...' : 'TOOL'
+  pushWrapped(lines, `${icon} ${toolName} x${count}`, color, columns, true)
+  pushWrapped(lines, `  ${summary.slice(0, 200)}`, '#807B6E', columns)
+}
+
+function pushToolSummary(lines: RenderLine[], text: string, status: ToolStatus, columns: number) {
+  const color = status === 'running' ? '#C3A6FF' : status === 'failed' ? '#FF6B6B' : '#9FCF9B'
+  const label = status === 'running' ? '...' : status === 'failed' ? 'TOOL!' : 'TOOL'
+  pushWrapped(lines, label, color, columns, true)
+  pushWrapped(lines, `  ${text.slice(0, 300)}`, '#807B6E', columns)
+}
+
+function pushAgentProgress(lines: RenderLine[], agents: AgentProgressLine[], status: string, columns: number) {
+  const isLast = (i: number) => i === agents.length - 1
+  const headerColor = status === 'running' ? '#C3A6FF' : '#9FCF9B'
+  const count = agents.length
+
+  pushWrapped(lines, status === 'running' ? `Running ${count} agent${count > 1 ? 's' : ''}...` : `${count} agent${count > 1 ? 's' : ''} finished`, headerColor, columns, true)
+
+  for (let i = 0; i < agents.length; i++) {
+    const a = agents[i]!
+    const tree = isLast(i) ? '└' : '├'  // └ or ├
+    const color = a.status === 'completed' ? '#9FCF9B' : a.status === 'failed' ? '#FF6B6B' : a.status === 'running' ? '#C3A6FF' : '#807B6E'
+    const name = a.agentType
+    pushWrapped(lines, ` ${tree} ${name}  ${a.toolUseCount} tools  ${a.description.slice(0, 40)}`, color, columns)
+  }
+}
+
+function pushTeammateMessage(
+  lines: RenderLine[], from: string, color: string,
+  messageType: TeammateMessageType, summary: string, content: string, columns: number,
+) {
+  const typeIcons: Record<TeammateMessageType, string> = {
+    task_completed: '✓',  // ✓
+    task_assignment: '#',
+    shutdown_request: '✗',  // ✗
+    shutdown_response: '→',  // →
+    idle_notification: 'Z',
+    text: '@',
+  }
+  const icon = typeIcons[messageType] ?? '@'
+  const labelColor = messageType === 'task_completed' ? '#9FCF9B' : messageType === 'shutdown_request' ? '#FF6B6B' : '#C3A6FF'
+  pushWrapped(lines, `${icon} @${from}`, labelColor, columns, true)
+  pushWrapped(lines, `  ${summary || content.slice(0, 200)}`, '#807B6E', columns)
+}
+
+// ---- Helpers ----
 
 function pushWrapped(lines: RenderLine[], text: string, color: string, columns: number, bold = false) {
   const width = Math.max(20, columns)
@@ -91,17 +160,4 @@ function pushWrapped(lines: RenderLine[], text: string, color: string, columns: 
     lines.push({ text: raw.slice(index, index + width), color, bold })
     if (!raw) break
   }
-}
-
-function toolLabel(status: ToolStatus) {
-  if (status === 'running') return 'TOOL...'
-  if (status === 'failed') return 'TOOL!'
-  if (status === 'cancelled') return 'TOOL-X'
-  return 'TOOL'
-}
-
-function toolStatusColor(status: ToolStatus): string {
-  if (status === 'running') return '#C3A6FF'
-  if (status === 'failed' || status === 'cancelled') return '#FF6B6B'
-  return '#9FCF9B'
 }

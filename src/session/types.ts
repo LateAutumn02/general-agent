@@ -11,6 +11,13 @@ export type ChatMessage = {
   role: 'user' | 'assistant' | 'tool' | 'system'
   text: string
   createdAt: number
+  toolCalls?: Array<{
+    id: string
+    name: string
+    input: unknown
+  }>
+  toolCallId?: string
+  toolName?: string
 
   /** 父消息 UUID（形成有序链表，加载时沿链回溯） */
   parentUuid?: string

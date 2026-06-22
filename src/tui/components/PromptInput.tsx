@@ -84,7 +84,7 @@ export function PromptInput({
 
   const prompt = mode === 'bash' ? '$' : '\u203a'
   const placeholder = mode === 'bash' ? 'shell command' : 'Ask general-agent'
-  const displayValue = disabled ? 'waiting for tool approval' : value || placeholder
+  const displayValue = disabled ? 'processing...' : value || placeholder
 
   return (
     <Box flexDirection="column">

@@ -1,6 +1,6 @@
 # 模型 API 流程
 
-> 最后更新：2026-06-17 | 参考：legacy/python/docs/api, reference/cc-haha/src/services
+> 最后更新：2026-06-17
 
 ## 阶段1：请求构建
 

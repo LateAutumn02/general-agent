@@ -17,13 +17,12 @@ import type { RuntimeEvent } from '../runtime/events.js'
 import { JsonlSessionStore } from '../session/store.js'
 import type { ChatMessage, SessionRecord } from '../session/types.js'
 import { loadDefaultSkills } from '../skills/loader.js'
-import { MultiAgentManager } from '../multi-agent/manager.js'
-import { createSwarmPlanFromGoal } from '../swarm/planner.js'
 import { TaskRegistry } from '../tasks/registry.js'
 import type { TaskState } from '../tasks/types.js'
 import { Footer } from './components/Footer.js'
 import { Header } from './components/Header.js'
 import { LogSelector } from './components/LogSelector.js'
+import { PermissionSelector } from './components/PermissionSelector.js'
 import { PermissionPrompt } from './components/PermissionPrompt.js'
 import { PromptInput } from './components/PromptInput.js'
 import { Spinner } from './components/Spinner.js'
@@ -31,7 +30,7 @@ import { TaskBoard } from './components/TaskBoard.js'
 import { Transcript } from './components/Transcript.js'
 import { createInitialTranscript } from './mockRuntime.js'
 import { SLASH_COMMANDS, formatSlashCommandHelp } from './slashCommands.js'
-import type { PermissionDecision, PermissionRequest, PromptMode, TaskItem, TranscriptItem } from './types.js'
+import type { AgentPill, PermissionDecision, PermissionRequest, PromptMode, TaskItem, TranscriptItem } from './types.js'
 
 type AppProps = {
   args: string[]
@@ -65,9 +64,27 @@ export function App({ args, cwd }: AppProps) {
   const [promptValue, setPromptValue] = useState('')
   const [resumeView, setResumeView] = useState<ResumeView>(null)
   const resumeViewRef = useRef<ResumeView>(null)
+  const [permissionView, setPermissionView] = useState(false)
   resumeViewRef.current = resumeView
   const taskRegistry = useMemo(() => createInitialTaskRegistry(), [])
   const [tasks, setTasks] = useState<TaskItem[]>(() => taskItemsFromRegistry(taskRegistry))
+  // Compute agent pills for footer display
+  const agentPills = useMemo<AgentPill[]>(() => {
+    const agentTasks = taskRegistry.list().filter(t => t.type === 'agent')
+    if (agentTasks.length === 0) return []
+    const pills: AgentPill[] = [{ name: 'main', color: 'yellow', isMain: true, isSelected: false }]
+    const colors: AgentPill['color'][] = ['cyan', 'green', 'magenta', 'blue', 'red']
+    for (let i = 0; i < agentTasks.length; i++) {
+      const t = agentTasks[i]!
+      pills.push({
+        name: t.title.length > 12 ? t.title.slice(0, 11) : t.title,
+        color: colors[i % colors.length]!,
+        isMain: false,
+        isSelected: false,
+      })
+    }
+    return pills
+  }, [tasks])
   const config = useMemo(() => loadRuntimeConfig(args, cwd), [args, cwd])
   const [currentModel, setCurrentModel] = useState(config.model)
   const [items, setItems] = useState<TranscriptItem[]>(() => createInitialTranscript(config.providerLabel, config.model))
@@ -82,6 +99,11 @@ export function App({ args, cwd }: AppProps) {
   })
   const pendingPermission = useRef<PendingPermission | undefined>(undefined)
   const activeTurnController = useRef<AbortController | undefined>(undefined)
+  // Tool call collapsing: track consecutive calls of the same type
+  const toolGroup = useRef<{ name: string; count: number; lastId: string } | null>(null)
+  // Map callId → tool name for detecting Agent tool results
+  const toolCallNames = useRef<Map<string, string>>(new Map())
+  const agentTaskIds = useRef<Map<string, string>>(new Map())
   const sessionStore = useMemo(() => new JsonlSessionStore(join(cwd, '.general-agent', 'sessions')), [cwd])
 
   // ---- Session initialization (--resume / --continue) ----
@@ -181,31 +203,36 @@ export function App({ args, cwd }: AppProps) {
     setItems(transcriptFromMessages(messages))
   }
 
+  useEffect(() => {
+    if (view !== 'tasks') return
+    const interval = setInterval(() => {
+      setTasks(taskItemsFromRegistry(taskRegistry))
+    }, 1000)
+    return () => clearInterval(interval)
+  }, [taskRegistry, view])
+
   // ---- Global input handling ----
 
   useInput((input, key) => {
-    // Resume view active — block all chat input (picker handles its own useInput)
-    if (resumeViewRef.current) {
+    // Resume view, permission prompt, or permission picker active — block chat input
+    if (resumeViewRef.current || permissionView || permission) {
       return
     }
 
-    if (permission) {
-      handlePermissionInput(input, key)
+    if ((key.ctrl && input === 'c') || key.escape) {
+      if (activeTurnController.current) {
+        activeTurnController.current.abort('cancelled by user')
+        setItems(prev => [...prev, { type: 'error', id: crypto.randomUUID(), text: 'Cancelled current turn' }])
+      }
       return
     }
 
-    if (key.ctrl && input === 'c' && activeTurnController.current) {
-      activeTurnController.current.abort('cancelled by user')
-      setItems(prev => [...prev, { type: 'error', id: crypto.randomUUID(), text: 'Cancelled current turn' }])
-      return
-    }
-
-    if (key.leftArrow) {
+    if (key.leftArrow || (typeof input === 'string' && input.includes('\x1b[D'))) {
       setView('tasks')
       setSelectedTaskId(prev => prev ?? taskRegistry.list()[0]?.id)
       return
     }
-    if (key.rightArrow) {
+    if (key.rightArrow || (typeof input === 'string' && input.includes('\x1b[C'))) {
       setView('chat')
       setDetailTaskId(undefined)
       return
@@ -335,6 +362,28 @@ export function App({ args, cwd }: AppProps) {
       return
     }
 
+    if (trimmed === '/permission' || trimmed.startsWith('/permission ')) {
+      const arg = trimmed.slice('/permission'.length).trim()
+      if (arg) {
+        // Direct mode set (for scripting)
+        const validModes = ['default', 'acceptEdits', 'bypassPermissions'] as const
+        const mode = arg as typeof validModes[number]
+        if (mode === 'default' || mode === 'acceptEdits' || mode === 'bypassPermissions') {
+          permissionController.setMode(mode)
+          setItems(prev => [
+            ...prev,
+            { type: 'user', id: crypto.randomUUID(), text: trimmed },
+            { type: 'tool_summary', id: crypto.randomUUID(), text: `Permission mode set to "${mode}"`, status: 'completed' },
+          ])
+        }
+        return
+      }
+      // No argument: show picker
+      setItems(prev => [...prev, { type: 'user', id: crypto.randomUUID(), text: trimmed }])
+      setPermissionView(true)
+      return
+    }
+
     if (trimmed === '/continue') {
       setItems(prev => [...prev, { type: 'user', id: crypto.randomUUID(), text: trimmed }])
       const sessions = await sessionStore.list({ limit: 1 })
@@ -356,11 +405,6 @@ export function App({ args, cwd }: AppProps) {
           status: 'completed',
         },
       ])
-      return
-    }
-
-    if (trimmed.startsWith('/swarm ')) {
-      await handleSwarmCommand(trimmed)
       return
     }
 
@@ -473,37 +517,6 @@ export function App({ args, cwd }: AppProps) {
         type: 'tool_summary',
         id: crypto.randomUUID(),
         text: `Switched model to ${nextModel}`,
-        status: 'completed',
-      },
-    ])
-  }
-
-  async function handleSwarmCommand(command: string) {
-    const goal = command.slice('/swarm '.length).trim()
-    if (!goal) return
-    const plan = createSwarmPlanFromGoal(goal)
-    const manager = new MultiAgentManager(taskRegistry)
-    const agentTasks = plan.members.map(member => manager.createAgentTask({
-      description: `${member.profile.name}: ${goal}`,
-      prompt: member.prompt,
-      profile: member.profile.name,
-      allowedTools: member.profile.allowedTools,
-    }, agentState.current.sessionId))
-    for (const task of agentTasks) {
-      await sessionStore.append(agentState.current.sessionId, {
-        type: 'task_state',
-        task: toTaskItem(task),
-      })
-    }
-    setSelectedTaskId(agentTasks[0]?.id)
-    setTasks(taskItemsFromRegistry(taskRegistry))
-    setItems(prev => [
-      ...prev,
-      { type: 'user', id: crypto.randomUUID(), text: command },
-      {
-        type: 'tool_summary',
-        id: crypto.randomUUID(),
-        text: `Created swarm plan for "${goal}":\n${agentTasks.map(task => `- ${task.profile.name}: ${task.prompt}`).join('\n')}`,
         status: 'completed',
       },
     ])
@@ -738,43 +751,138 @@ export function App({ args, cwd }: AppProps) {
   }
 
   function applyRuntimeEvent(event: RuntimeEvent) {
+    // Log all errors to stderr for debugging (doesn't interfere with Ink TUI)
+    if (event.type === 'error') {
+      process.stderr.write(`\n[ERROR] ${event.error}\n`)
+    } else if (event.type === 'tool_call_finished' && !event.result.ok) {
+      process.stderr.write(`\n[TOOL ERROR] ${event.result.error ?? event.result.content}\n`)
+    }
     if (event.type === 'model_request_started') {
+      // Flush pending tool group before continuing
+      flushToolGroup()
       if (event.afterTool) {
         setItems(prev => [
           ...prev,
-          {
-            type: 'tool_summary',
-            id: crypto.randomUUID(),
-            text: 'Continuing after tool result',
-            status: 'running',
-          },
+          { type: 'tool_summary', id: crypto.randomUUID(), text: 'Continuing after tool result', status: 'running' },
         ])
       }
     } else if (event.type === 'assistant_delta') {
       appendAssistantDelta(event.messageId, event.text)
     } else if (event.type === 'tool_call_started') {
-      setItems(prev => [
-        ...prev,
-        {
-          type: 'tool_summary',
-          id: crypto.randomUUID(),
-          text: `Running ${event.call.name}`,
+      const name = event.call.name
+      toolCallNames.current.set(event.call.id, name)
+      if (name === 'Agent') {
+        const input = getAgentToolInput(event.call.input)
+        const task = taskRegistry.create({
+          type: 'agent',
+          title: input.name ? `${input.name}@${input.teamName}` : input.description,
+          activity: `Running ${input.agentType}`,
           status: 'running',
-        },
-      ])
+          messages: [{
+            id: crypto.randomUUID(),
+            role: 'user',
+            text: input.prompt,
+            createdAt: Date.now(),
+          }],
+          output: input.prompt,
+        })
+        agentTaskIds.current.set(event.call.id, task.id)
+        setSelectedTaskId(prev => prev ?? task.id)
+        setTasks(taskItemsFromRegistry(taskRegistry))
+        void sessionStore.append(agentState.current.sessionId, {
+          type: 'task_state',
+          task: toTaskItem(task),
+        })
+      }
+      const g = toolGroup.current
+      if (g && g.name === name) {
+        // Update existing collapsed group
+        g.count++
+        setItems(prev => prev.map(item =>
+          item.type === 'tool_group' && item.id === g.lastId
+            ? { ...item, count: g!.count, summary: `${g!.count} ${g!.name} calls` }
+            : item,
+        ))
+      } else {
+        // Flush previous group, start new one
+        flushToolGroup()
+        const id = crypto.randomUUID()
+        toolGroup.current = { name, count: 1, lastId: id }
+        setItems(prev => [
+          ...prev,
+          { type: 'tool_group', id, toolName: name, count: 1, summary: `Running ${name}`, status: 'running' },
+        ])
+      }
     } else if (event.type === 'tool_call_finished') {
-      setItems(prev => [
-        ...prev,
-        {
-          type: event.result.ok ? 'tool_summary' : 'error',
-          id: crypto.randomUUID(),
-          text: event.result.ok ? summarizeToolResult(event.result.content) : event.result.error ?? event.result.content,
-          status: event.result.ok ? 'completed' : undefined as never,
-        },
-      ])
+      flushToolGroup()
+      const toolName = toolCallNames.current.get(event.callId) ?? ''
+      const taskId = agentTaskIds.current.get(event.callId)
+      if (taskId) {
+        const updated = taskRegistry.update(taskId, {
+          status: event.result.ok ? 'completed' : 'failed',
+          activity: event.result.ok ? 'Done' : 'Failed',
+          messages: [
+            ...(taskRegistry.get(taskId)?.messages ?? []),
+            {
+              id: crypto.randomUUID(),
+              role: event.result.ok ? 'assistant' : 'tool',
+              text: event.result.content,
+              createdAt: Date.now(),
+            },
+          ],
+          output: event.result.content,
+        })
+        if (updated) {
+          setTasks(taskItemsFromRegistry(taskRegistry))
+          void sessionStore.append(agentState.current.sessionId, {
+            type: 'task_state',
+            task: toTaskItem(updated),
+          })
+        }
+        agentTaskIds.current.delete(event.callId)
+      }
+      if (toolName === 'Agent' && event.result.ok) {
+        // Agent tool finished — show agent_progress item with first line of response
+        const content = event.result.content
+        const firstLine = content.split('\n')[0]?.slice(0, 80) ?? 'Agent completed'
+        setItems(prev => [
+          ...prev,
+          {
+            type: 'agent_progress',
+            id: crypto.randomUUID(),
+            agents: [{
+              agentId: event.callId,
+              agentType: 'Agent',
+              description: firstLine,
+              status: 'completed',
+              toolUseCount: 0,
+              tokenCount: 0,
+              durationMs: 0,
+              isBackground: false,
+            }],
+            status: 'completed',
+          },
+        ])
+      } else if (event.result.ok) {
+        setItems(prev => [...prev, { type: 'tool_summary', id: crypto.randomUUID(), text: summarizeToolResult(event.result.content), status: 'completed' as const }])
+      } else {
+        setItems(prev => [...prev, { type: 'error', id: crypto.randomUUID(), text: event.result.error ?? event.result.content }])
+      }
     } else if (event.type === 'error') {
       setItems(prev => [...prev, { type: 'error', id: crypto.randomUUID(), text: event.error }])
     }
+  }
+
+  function flushToolGroup() {
+    const g = toolGroup.current
+    if (!g) return
+    // Mark the collapsed group as completed
+    setItems(prev => prev.map(item =>
+      item.type === 'tool_group' && item.id === g.lastId
+        ? { ...item, status: 'completed' as const, summary: `${g.count} ${g.name} calls` }
+        : item,
+    ))
+    toolGroup.current = null
   }
 
   function appendAssistantDelta(messageId: string, text: string) {
@@ -791,42 +899,7 @@ export function App({ args, cwd }: AppProps) {
     })
   }
 
-  function handlePermissionInput(
-    input: string,
-    key: { return?: boolean; backspace?: boolean; delete?: boolean; escape?: boolean },
-  ) {
-    if (!permission) return
-
-    if (collectingDenyReason) {
-      if (key.return) {
-        resolvePermission({ type: 'deny', reason: denyReason.trim() || undefined })
-        return
-      }
-      if (key.escape) {
-        setCollectingDenyReason(false)
-        setDenyReason('')
-        return
-      }
-      if (key.backspace || key.delete) {
-        setDenyReason(prev => prev.slice(0, -1))
-        return
-      }
-      if (input) {
-        setDenyReason(prev => prev + input)
-      }
-      return
-    }
-
-    if (input === 'y' || input === '1') {
-      resolvePermission({ type: 'allow', remember: false })
-    } else if (input === 'p' || input === '2') {
-      resolvePermission({ type: 'allow', remember: true })
-    } else if (input === 'n' || input === '3' || key.escape) {
-      setCollectingDenyReason(true)
-    }
-  }
-
-  function resolvePermission(decision: PermissionDecision) {
+  function handlePermissionDecision(decision: PermissionDecision) {
     if (!permission || !pendingPermission.current) return
     const pending = pendingPermission.current
     const coreDecision = toCorePermissionDecision(decision, pending.request)
@@ -834,7 +907,7 @@ export function App({ args, cwd }: AppProps) {
       decision.type === 'deny'
         ? `Denied ${permission.toolName}${decision.reason ? `: ${decision.reason}` : ''}`
         : decision.remember
-          ? `Allowed ${permission.toolName}; future ${permission.prefixRule} commands will skip prompts this session`
+          ? `Allowed ${permission.toolName}; future requests will skip prompts`
           : `Allowed ${permission.toolName}`
 
     setItems(prev => [
@@ -848,6 +921,11 @@ export function App({ args, cwd }: AppProps) {
     setCollectingDenyReason(false)
     pendingPermission.current = undefined
     pending.resolve(coreDecision)
+  }
+
+  function cancelDenyReason() {
+    setCollectingDenyReason(false)
+    setDenyReason('')
   }
 
   // ---- Render ----
@@ -869,7 +947,20 @@ export function App({ args, cwd }: AppProps) {
     <Box flexDirection="column" minHeight={18}>
       <Header cwd={cwd} model={currentModel} provider={config.providerLabel} />
       <Box flexDirection="column" flexGrow={1} paddingX={1}>
-        {resumeView ? (
+        {permissionView ? (
+          <PermissionSelector
+            currentMode={permissionController.getMode()}
+            onSelect={mode => {
+              permissionController.setMode(mode)
+              setPermissionView(false)
+              setItems(prev => [...prev, { type: 'tool_summary', id: crypto.randomUUID(), text: `Permission mode set to "${mode}"`, status: 'completed' }])
+            }}
+            onCancel={() => {
+              setPermissionView(false)
+              setItems(prev => [...prev, { type: 'tool_summary', id: crypto.randomUUID(), text: 'Permission mode unchanged', status: 'completed' }])
+            }}
+          />
+        ) : resumeView ? (
           <ResumeViewDisplay
             resumeView={resumeView}
             onSelect={handleLogSelect}
@@ -884,9 +975,12 @@ export function App({ args, cwd }: AppProps) {
           request={permission}
           denyReason={denyReason}
           collectingDenyReason={collectingDenyReason}
+          onDecision={handlePermissionDecision}
+          onDenyReasonChange={setDenyReason}
+          onDenyCancel={cancelDenyReason}
         />
       ) : null}
-      {resumeView ? null : (
+      {(resumeView || permissionView) ? null : (
         <PromptInput
           disabled={Boolean(permission) || processing || !sessionReady}
           mode={inputMode}
@@ -897,7 +991,12 @@ export function App({ args, cwd }: AppProps) {
           onSubmit={submit}
         />
       )}
-      <Footer cwd={cwd} model={currentModel} provider={config.providerLabel} mode={inputMode} />
+      <Footer
+        permissionMode={permissionController.getMode()}
+        agentPills={agentPills}
+        processing={processing}
+        hasTasks={taskRegistry.list().filter(t => t.type === 'agent').length > 0}
+      />
     </Box>
   )
 
@@ -991,6 +1090,7 @@ function transcriptFromMessages(messages: ChatMessage[]): TranscriptItem[] {
       return [{ type: 'user' as const, id: message.id, text: message.text }]
     }
     if (message.role === 'assistant') {
+      if (!message.text.trim()) return []
       return [{ type: 'assistant' as const, id: message.id, text: message.text }]
     }
     if (message.role === 'tool') {
@@ -1004,21 +1104,7 @@ function transcriptFromMessages(messages: ChatMessage[]): TranscriptItem[] {
 }
 
 function createInitialTaskRegistry() {
-  const registry = new TaskRegistry()
-  registry.create({
-    type: 'manual',
-    title: 'Review TUI approval flow',
-    activity: 'Permission flow is connected to runtime',
-    status: 'awaiting_input',
-  })
-  const archive = registry.create({
-    type: 'manual',
-    title: 'Archive Python implementation',
-    activity: 'Moved to legacy/python',
-    status: 'running',
-  })
-  registry.update(archive.id, { status: 'completed' })
-  return registry
+  return new TaskRegistry()
 }
 
 function getWheelDirection(
@@ -1054,18 +1140,35 @@ function toTaskItem(task: TaskState): TaskItem {
     activity: task.activity,
     messages: task.messages.length,
     output: task.output,
-    age: formatAge(task.updatedAt),
+    age: formatTaskDuration(task),
   }
 }
 
 function toTuiTaskStatus(task: TaskState): TaskItem['status'] {
   if (task.status === 'awaiting_input') return 'awaiting_input'
   if (task.status === 'completed') return 'completed'
+  if (task.status === 'failed') return 'failed'
+  if (task.status === 'cancelled') return 'cancelled'
   return 'running'
 }
 
-function formatAge(timestamp: number) {
-  const seconds = Math.max(0, Math.floor((Date.now() - timestamp) / 1000))
+function getAgentToolInput(input: unknown) {
+  const value = typeof input === 'object' && input !== null ? input as Record<string, unknown> : {}
+  const name = typeof value.name === 'string' && value.name.trim() ? value.name.trim() : undefined
+  const teamName = typeof value.team_name === 'string' && value.team_name.trim() ? value.team_name.trim() : 'default'
+  const description = typeof value.description === 'string' && value.description.trim()
+    ? value.description.trim()
+    : 'Agent'
+  const prompt = typeof value.prompt === 'string' ? value.prompt : ''
+  const agentType = typeof value.subagent_type === 'string' && value.subagent_type.trim()
+    ? value.subagent_type.trim()
+    : 'general-purpose'
+  return { name, teamName, description, prompt, agentType }
+}
+
+function formatTaskDuration(task: TaskState) {
+  const end = task.completedAt ?? (task.status === 'running' ? Date.now() : task.updatedAt)
+  const seconds = Math.max(0, Math.floor((end - task.createdAt) / 1000))
   if (seconds < 60) return `${seconds}s`
   const minutes = Math.floor(seconds / 60)
   if (minutes < 60) return `${minutes}m`

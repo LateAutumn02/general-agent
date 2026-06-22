@@ -1,6 +1,6 @@
 # Agent 核心循环流程
 
-> 最后更新：2026-06-17 | 参考：legacy/python/docs/agent, reference/cc-haha/src/query.ts
+> 最后更新：2026-06-17
 
 ## 阶段1：接收用户回合
 

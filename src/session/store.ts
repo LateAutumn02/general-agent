@@ -101,7 +101,7 @@ function extractFirstPrompt(head: string): string {
       const text = typeof message.text === 'string' ? message.text : ''
       if (!text.trim()) continue
 
-      let result = text.replace(/\n/g, ' ').trim()
+      let result = text.replace(/\r?\n/g, ' ').trim()
 
       // Skip slash-command messages but remember first as fallback
       const cmdMatch = COMMAND_NAME_RE.exec(result)

@@ -24,6 +24,7 @@ export function TaskBoard({
   const awaiting = tasks.filter(task => task.status === 'awaiting_input')
   const running = tasks.filter(task => task.status === 'running')
   const completed = tasks.filter(task => task.status === 'completed')
+  const failed = tasks.filter(task => task.status === 'failed' || task.status === 'cancelled')
   const detailTask = detailId ? tasks.find(task => task.id === detailId) : undefined
 
   return (
@@ -46,13 +47,14 @@ export function TaskBoard({
           <TaskGroup title="Needs input" tasks={awaiting} selectedId={selectedId} />
           <TaskGroup title="Working" tasks={running} selectedId={selectedId} />
           <TaskGroup title="Completed" tasks={completed} selectedId={selectedId} />
+          <TaskGroup title="Failed" tasks={failed} selectedId={selectedId} />
         </>
       )}
       <Box marginTop={1}>
         <Text color={theme.muted}>
           {detailTask
             ? 'Esc returns to tasks · C cancels task'
-            : 'Up/down select · Enter opens · N creates · C cancels · Right arrow returns'}
+            : 'Up/down select · Enter opens · C cancels · Right arrow returns'}
         </Text>
       </Box>
     </Box>
@@ -96,7 +98,7 @@ function TaskDetail({ task }: { task: TaskItem }) {
     <Box flexDirection="column" marginTop={1}>
       <Text color={statusColor(task.status)} bold>{task.title}</Text>
       <Text color={theme.muted}>Status: {task.status} · {task.activity}</Text>
-      <Text color={theme.muted}>Messages: {task.messages} · Updated {task.age}</Text>
+      <Text color={theme.muted}>Messages: {task.messages} · Duration {task.age}</Text>
       <Box marginTop={1} flexDirection="column">
         <Text color={theme.assistant}>Output</Text>
         {task.output
@@ -110,5 +112,6 @@ function TaskDetail({ task }: { task: TaskItem }) {
 function statusColor(status: TaskStatus) {
   if (status === 'awaiting_input') return theme.model
   if (status === 'running') return theme.accent
+  if (status === 'failed' || status === 'cancelled') return theme.error
   return theme.success
 }

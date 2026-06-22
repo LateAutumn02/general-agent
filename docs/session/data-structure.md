@@ -1,6 +1,6 @@
 # 会话持久化数据结构
 
-> 最后更新：2026-06-22 | 参考：reference/cc-haha/src/types/logs.ts, src/utils/sessionStorage.ts, src/utils/sessionRestore.ts
+> 最后更新：2026-06-22
 
 ## 核心类型概览
 
@@ -97,9 +97,9 @@ type SessionRecord = {
 
 ---
 
-## LogOption（cc-haha 完整版）
+## LogOption（扩展版）
 
-cc-haha 中的 `LogOption` 是 `SessionRecord` 的超集，包含更多字段用于高级功能：
+扩展版 `LogOption` 是 `SessionRecord` 的超集，包含更多字段用于高级功能：
 
 ```ts
 type LogOption = {
@@ -176,7 +176,7 @@ type SessionEvent =
   | { type: 'metadata'; patch: Partial<SessionRecord> }
 ```
 
-### 对应的 JSONL 条目类型（cc-haha Entry）
+### 对应的 JSONL 条目类型（Entry）
 
 ```ts
 /** JSONL 文件中一行的所有可能类型 */
@@ -484,7 +484,7 @@ const DEEP_SEARCH_DEBOUNCE_MS = 300
 ## 项目存储路径
 
 ```
-~/.claude/
+.general-agent/
   projects/
     <sanitized_cwd>/           # 如 -Users-foo-my-project
       <sessionId>.jsonl         # 主会话转录

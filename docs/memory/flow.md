@@ -1,6 +1,6 @@
 # 记忆系统流程
 
-> 最后更新：2026-06-17 | 参考：legacy/python/docs/memory, reference/cc-haha/docs/memory
+> 最后更新：2026-06-17
 
 ## 阶段1：加载记忆
 
