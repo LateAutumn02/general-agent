@@ -2,6 +2,7 @@ import React from 'react'
 import { Box, Text } from 'ink'
 import { theme } from '../theme.js'
 import type { TaskItem, TaskStatus } from '../types.js'
+import { MarkdownText } from './MarkdownText.js'
 
 type TaskBoardProps = {
   tasks: TaskItem[]
@@ -98,9 +99,9 @@ function TaskDetail({ task }: { task: TaskItem }) {
       <Text color={theme.muted}>Messages: {task.messages} · Updated {task.age}</Text>
       <Box marginTop={1} flexDirection="column">
         <Text color={theme.assistant}>Output</Text>
-        <Text color={task.output ? theme.muted : theme.subtle}>
-          {task.output || 'No output recorded yet.'}
-        </Text>
+        {task.output
+          ? <MarkdownText text={task.output} color={theme.muted} />
+          : <Text color={theme.subtle}>No output recorded yet.</Text>}
       </Box>
     </Box>
   )

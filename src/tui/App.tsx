@@ -46,6 +46,7 @@ export function App({ args, cwd }: AppProps) {
   const [denyReason, setDenyReason] = useState('')
   const [collectingDenyReason, setCollectingDenyReason] = useState(false)
   const [view, setView] = useState<'chat' | 'tasks'>('chat')
+  const [chatScrollBack, setChatScrollBack] = useState(0)
   const [selectedTaskId, setSelectedTaskId] = useState<string | undefined>()
   const [detailTaskId, setDetailTaskId] = useState<string | undefined>()
   const [processing, setProcessing] = useState(false)
@@ -120,6 +121,26 @@ export function App({ args, cwd }: AppProps) {
       setView('chat')
       setDetailTaskId(undefined)
       return
+    }
+
+    if (view === 'chat') {
+      const wheel = getWheelDirection(input, key)
+      if (key.pageUp) {
+        setChatScrollBack(prev => prev + 12)
+        return
+      }
+      if (key.pageDown) {
+        setChatScrollBack(prev => Math.max(0, prev - 12))
+        return
+      }
+      if (key.upArrow || input.toLowerCase() === 'k' || wheel === 'up') {
+        setChatScrollBack(prev => prev + 3)
+        return
+      }
+      if (key.downArrow || input.toLowerCase() === 'j' || wheel === 'down') {
+        setChatScrollBack(prev => Math.max(0, prev - 3))
+        return
+      }
     }
 
     if (view === 'tasks') {
@@ -553,7 +574,7 @@ export function App({ args, cwd }: AppProps) {
     <Box flexDirection="column" minHeight={18}>
       <Header cwd={cwd} model={model} provider={config.providerLabel} />
       <Box flexDirection="column" flexGrow={1} paddingX={1}>
-        <Transcript items={items} />
+        <Transcript items={items} scrollBack={chatScrollBack} />
       </Box>
       {permission ? (
         <PermissionPrompt
@@ -646,6 +667,27 @@ function createInitialTaskRegistry() {
   })
   registry.update(archive.id, { status: 'completed' })
   return registry
+}
+
+function getWheelDirection(
+  input: string,
+  key: { [name: string]: unknown },
+): 'up' | 'down' | undefined {
+  if (key.wheelUp === true) return 'up'
+  if (key.wheelDown === true) return 'down'
+  return parseMouseWheel(input)
+}
+
+function parseMouseWheel(input: string): 'up' | 'down' | undefined {
+  for (const match of input.matchAll(/\x1b\[<(\d+);\d+;\d+[mM]/g)) {
+    const code = Number(match[1])
+    if ((code & 64) === 64) return (code & 1) === 1 ? 'down' : 'up'
+  }
+  for (const match of input.matchAll(/\x1b\[M([\s\S])([\s\S])([\s\S])/g)) {
+    const button = (match[1]?.charCodeAt(0) ?? 32) - 32
+    if ((button & 64) === 64) return (button & 1) === 1 ? 'down' : 'up'
+  }
+  return undefined
 }
 
 function taskItemsFromRegistry(registry: TaskRegistry): TaskItem[] {

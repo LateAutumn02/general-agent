@@ -22,7 +22,23 @@ if (cliArgs.print) {
   process.exit(0)
 }
 
-render(<App args={args} cwd={cliArgs.cwd} />)
+let restoreTerminal: (() => void) | undefined
+if (process.stdout.isTTY && process.env.GENERAL_AGENT_NO_ALT_SCREEN !== '1') {
+  process.stdout.write('\x1b[?1049h\x1b[?1007h\x1b[2J\x1b[H')
+  restoreTerminal = () => {
+    process.stdout.write('\x1b[?1007l\x1b[?1006l\x1b[?1002l\x1b[?1000l\x1b[?1049l')
+  }
+  process.on('exit', restoreTerminal)
+  process.on('SIGINT', () => {
+    restoreTerminal?.()
+    process.exit(130)
+  })
+}
+
+const app = render(<App args={args} cwd={cliArgs.cwd} />)
+void app.waitUntilExit().finally(() => {
+  restoreTerminal?.()
+})
 
 async function runPrintMode(cliArgs: ReturnType<typeof parseCliArgs>) {
   const prompt = cliArgs.prompt
